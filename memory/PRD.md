@@ -47,3 +47,16 @@ Inspiration: Notion möter HubSpot.
 1. Användaren fyller i RESEND_API_KEY (om e-post önskas aktivt).
 2. Användaren validerar pipeline-flödet och korrigerar data.
 3. Eventuell utbyggnad av AI-research med faktiska källor (LinkedIn/Hemnet).
+
+## Phase 1 — Multi-user & Auth (2026-02 / iteration 2-3)
+- ✅ JWT email/lösenord auth (httpOnly cookies + Bearer fallback)
+- ✅ Två roller: admin + member. Admin seedad från .env (delfi@skandiamaklarna.se)
+- ✅ Brute force-skydd: 5 misslyckade login/15 min per (ip+email), X-Forwarded-For-säkrad
+- ✅ /team-sida: lista, bjud in, ändra roll, ta bort användare (admin only)
+- ✅ owner_id + owner_name på prospekt; nya prospekt auto-tilldelas skaparen
+- ✅ Pipeline-filter: Alla / Mina / Otilldelade / <användare>s prospekt
+- ✅ Owner-väljare i ProspectSheet
+- ✅ Aktivitetslogg loggar actor_id + actor_name; visas i feed
+- ✅ /login-sida + ProtectedRoute + redirect-flow + Layout med logout-knapp
+- ✅ Owner blir null automatiskt när användare tas bort (ej orphaned data)
+- ✅ Test report: 32/33 backend + 100% frontend (enda kvarvarande: CORS preflight K8s ingress override — kosmetiskt)
