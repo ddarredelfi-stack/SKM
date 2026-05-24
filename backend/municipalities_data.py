@@ -1,0 +1,75 @@
+"""Top 60 Swedish municipalities by population with coordinates and competitor presence
+estimates. Used for the 'white spots' map / market gap analysis.
+"""
+
+# Each entry: name, region (län), latitude, longitude, population (approx 2024),
+# transactions_per_year (rough estimate of bostadstransaktioner).
+MUNICIPALITIES = [
+    {"name": "Stockholm", "region": "Stockholms län", "lat": 59.3293, "lng": 18.0686, "population": 988943, "transactions": 18000},
+    {"name": "Göteborg", "region": "Västra Götalands län", "lat": 57.7089, "lng": 11.9746, "population": 605000, "transactions": 11000},
+    {"name": "Malmö", "region": "Skåne län", "lat": 55.6049, "lng": 13.0038, "population": 357377, "transactions": 7200},
+    {"name": "Uppsala", "region": "Uppsala län", "lat": 59.8586, "lng": 17.6389, "population": 245000, "transactions": 4900},
+    {"name": "Linköping", "region": "Östergötlands län", "lat": 58.4108, "lng": 15.6214, "population": 167000, "transactions": 3400},
+    {"name": "Västerås", "region": "Västmanlands län", "lat": 59.6099, "lng": 16.5448, "population": 158653, "transactions": 3200},
+    {"name": "Örebro", "region": "Örebro län", "lat": 59.2741, "lng": 15.2066, "population": 158057, "transactions": 3100},
+    {"name": "Helsingborg", "region": "Skåne län", "lat": 56.0465, "lng": 12.6945, "population": 150975, "transactions": 3000},
+    {"name": "Norrköping", "region": "Östergötlands län", "lat": 58.5877, "lng": 16.1924, "population": 145076, "transactions": 2900},
+    {"name": "Jönköping", "region": "Jönköpings län", "lat": 57.7826, "lng": 14.1618, "population": 144817, "transactions": 2800},
+    {"name": "Lund", "region": "Skåne län", "lat": 55.7047, "lng": 13.1910, "population": 130000, "transactions": 2600},
+    {"name": "Umeå", "region": "Västerbottens län", "lat": 63.8258, "lng": 20.2630, "population": 132051, "transactions": 2600},
+    {"name": "Gävle", "region": "Gävleborgs län", "lat": 60.6749, "lng": 17.1413, "population": 103526, "transactions": 2100},
+    {"name": "Borås", "region": "Västra Götalands län", "lat": 57.7210, "lng": 12.9401, "population": 115423, "transactions": 2300},
+    {"name": "Eskilstuna", "region": "Södermanlands län", "lat": 59.3711, "lng": 16.5092, "population": 108011, "transactions": 2150},
+    {"name": "Södertälje", "region": "Stockholms län", "lat": 59.1955, "lng": 17.6253, "population": 102257, "transactions": 2000},
+    {"name": "Karlstad", "region": "Värmlands län", "lat": 59.3793, "lng": 13.5036, "population": 96466, "transactions": 1900},
+    {"name": "Täby", "region": "Stockholms län", "lat": 59.4439, "lng": 18.0686, "population": 75983, "transactions": 1500},
+    {"name": "Växjö", "region": "Kronobergs län", "lat": 56.8777, "lng": 14.8094, "population": 96075, "transactions": 1900},
+    {"name": "Halmstad", "region": "Hallands län", "lat": 56.6745, "lng": 12.8578, "population": 105129, "transactions": 2100},
+    {"name": "Sundsvall", "region": "Västernorrlands län", "lat": 62.3908, "lng": 17.3069, "population": 99685, "transactions": 1950},
+    {"name": "Luleå", "region": "Norrbottens län", "lat": 65.5848, "lng": 22.1547, "population": 79202, "transactions": 1500},
+    {"name": "Trollhättan", "region": "Västra Götalands län", "lat": 58.2837, "lng": 12.2886, "population": 60000, "transactions": 1200},
+    {"name": "Östersund", "region": "Jämtlands län", "lat": 63.1792, "lng": 14.6357, "population": 64171, "transactions": 1280},
+    {"name": "Kalmar", "region": "Kalmar län", "lat": 56.6634, "lng": 16.3568, "population": 71026, "transactions": 1400},
+    {"name": "Falun", "region": "Dalarnas län", "lat": 60.6066, "lng": 15.6355, "population": 59558, "transactions": 1180},
+    {"name": "Skellefteå", "region": "Västerbottens län", "lat": 64.7507, "lng": 20.9528, "population": 76281, "transactions": 1500},
+    {"name": "Kristianstad", "region": "Skåne län", "lat": 56.0294, "lng": 14.1567, "population": 86529, "transactions": 1700},
+    {"name": "Karlskrona", "region": "Blekinge län", "lat": 56.1612, "lng": 15.5869, "population": 66776, "transactions": 1300},
+    {"name": "Skövde", "region": "Västra Götalands län", "lat": 58.3911, "lng": 13.8451, "population": 58000, "transactions": 1150},
+    {"name": "Uddevalla", "region": "Västra Götalands län", "lat": 58.3498, "lng": 11.9416, "population": 57100, "transactions": 1140},
+    {"name": "Varberg", "region": "Hallands län", "lat": 57.1057, "lng": 12.2502, "population": 67000, "transactions": 1340},
+    {"name": "Lidköping", "region": "Västra Götalands län", "lat": 58.5076, "lng": 13.1576, "population": 41109, "transactions": 820},
+    {"name": "Motala", "region": "Östergötlands län", "lat": 58.5403, "lng": 15.0438, "population": 44000, "transactions": 880},
+    {"name": "Trelleborg", "region": "Skåne län", "lat": 55.3753, "lng": 13.1574, "population": 47000, "transactions": 940},
+    {"name": "Sandviken", "region": "Gävleborgs län", "lat": 60.6173, "lng": 16.7763, "population": 39000, "transactions": 770},
+    {"name": "Härnösand", "region": "Västernorrlands län", "lat": 62.6322, "lng": 17.9379, "population": 25000, "transactions": 500},
+    {"name": "Vänersborg", "region": "Västra Götalands län", "lat": 58.3811, "lng": 12.3239, "population": 40000, "transactions": 800},
+    {"name": "Borlänge", "region": "Dalarnas län", "lat": 60.4858, "lng": 15.4371, "population": 52000, "transactions": 1040},
+    {"name": "Nyköping", "region": "Södermanlands län", "lat": 58.7531, "lng": 17.0086, "population": 58000, "transactions": 1160},
+    {"name": "Hässleholm", "region": "Skåne län", "lat": 56.1591, "lng": 13.7660, "population": 53000, "transactions": 1060},
+    {"name": "Landskrona", "region": "Skåne län", "lat": 55.8708, "lng": 12.8301, "population": 47000, "transactions": 940},
+    {"name": "Ängelholm", "region": "Skåne län", "lat": 56.2428, "lng": 12.8624, "population": 43000, "transactions": 860},
+    {"name": "Kungälv", "region": "Västra Götalands län", "lat": 57.8702, "lng": 11.9745, "population": 47000, "transactions": 940},
+    {"name": "Piteå", "region": "Norrbottens län", "lat": 65.3170, "lng": 21.4794, "population": 42000, "transactions": 800},
+    {"name": "Lerum", "region": "Västra Götalands län", "lat": 57.7700, "lng": 12.2685, "population": 44000, "transactions": 880},
+    {"name": "Sigtuna", "region": "Stockholms län", "lat": 59.6175, "lng": 17.7203, "population": 50000, "transactions": 1000},
+    {"name": "Värnamo", "region": "Jönköpings län", "lat": 57.1856, "lng": 14.0444, "population": 35000, "transactions": 700},
+    {"name": "Strängnäs", "region": "Södermanlands län", "lat": 59.3779, "lng": 17.0337, "population": 38000, "transactions": 760},
+    {"name": "Enköping", "region": "Uppsala län", "lat": 59.6363, "lng": 17.0773, "population": 47000, "transactions": 940},
+    {"name": "Kungsbacka", "region": "Hallands län", "lat": 57.4878, "lng": 12.0759, "population": 86000, "transactions": 1720},
+    {"name": "Mölndal", "region": "Västra Götalands län", "lat": 57.6554, "lng": 12.0138, "population": 71000, "transactions": 1420},
+    {"name": "Partille", "region": "Västra Götalands län", "lat": 57.7395, "lng": 12.1066, "population": 41000, "transactions": 820},
+    {"name": "Lidingö", "region": "Stockholms län", "lat": 59.3645, "lng": 18.1326, "population": 49000, "transactions": 980},
+    {"name": "Nacka", "region": "Stockholms län", "lat": 59.3110, "lng": 18.1640, "population": 109000, "transactions": 2180},
+    {"name": "Sollentuna", "region": "Stockholms län", "lat": 59.4280, "lng": 17.9510, "population": 76000, "transactions": 1520},
+    {"name": "Solna", "region": "Stockholms län", "lat": 59.3611, "lng": 18.0008, "population": 86000, "transactions": 1720},
+    {"name": "Falkenberg", "region": "Hallands län", "lat": 56.9054, "lng": 12.4912, "population": 47000, "transactions": 940},
+    {"name": "Bromma", "region": "Stockholms län", "lat": 59.3361, "lng": 17.9419, "population": 78000, "transactions": 1560},
+    {"name": "Visby", "region": "Gotlands län", "lat": 57.6348, "lng": 18.2948, "population": 25000, "transactions": 500},
+]
+
+
+def get_municipality(name: str):
+    for m in MUNICIPALITIES:
+        if m["name"].lower() == name.lower():
+            return m
+    return None
