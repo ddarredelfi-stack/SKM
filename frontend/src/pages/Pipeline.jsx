@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, MagnifyingGlass, DownloadSimple } from "@phosphor-icons/react";
+import { Plus, MagnifyingGlass, DownloadSimple, UserCircle } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { api, PIPELINE_STATUSES, STATUS_TONE, downloadCsv, formatDate } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import ProspectSheet from "../components/ProspectSheet";
 
 const empty = {
@@ -112,7 +113,20 @@ export default function Pipeline() {
             Dra prospekt mellan kolumner för att uppdatera status. {totalShown} prospekt totalt.
           </p>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
+          <Select value={ownerFilter} onValueChange={setOwnerFilter}>
+            <SelectTrigger data-testid="owner-filter" className="input-base w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Alla prospekt</SelectItem>
+              <SelectItem value="me">Mina prospekt</SelectItem>
+              <SelectItem value="unassigned">Otilldelade</SelectItem>
+              {users.filter((u) => u.id !== user?.id).map((u) => (
+                <SelectItem key={u.id} value={u.id}>{u.name}s prospekt</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <div className="relative">
             <MagnifyingGlass size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A1A1AA]" />
             <Input
@@ -251,6 +265,13 @@ export default function Pipeline() {
                         {p.next_step || "Nästa steg"} · {formatDate(p.next_step_date)}
                       </div>
                     )}
+                    <div className="mt-2 flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 text-[11px] text-[#52525B] font-body min-w-0">
+                        <UserCircle size={12} weight={p.owner_id ? "fill" : "regular"}
+                          color={p.owner_id ? "#CBA135" : "#A1A1AA"} />
+                        <span className="truncate">{p.owner_name || "Otilldelad"}</span>
+                      </div>
+                    </div>
                     {p.tags?.length > 0 && (
                       <div className="mt-2 flex gap-1 flex-wrap">
                         {p.tags.map((t) => (
@@ -275,6 +296,7 @@ export default function Pipeline() {
 
       <ProspectSheet
         prospect={selected}
+        users={users}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         onUpdated={() => load()}

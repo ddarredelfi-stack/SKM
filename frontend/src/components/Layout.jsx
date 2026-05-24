@@ -11,6 +11,7 @@ const mobileLinks = [
   { to: "/map", label: "Karta" },
   { to: "/scrape", label: "Scraping" },
   { to: "/settings", label: "Inställningar" },
+  { to: "/team", label: "Mitt team" },
 ];
 
 export default function Layout({ children }) {

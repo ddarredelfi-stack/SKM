@@ -1,0 +1,50 @@
+{
+  "summary": "Phase 1 multi-user auth: tested 30 backend test cases via /app/backend/tests/test_auth_phase1.py + frontend smoke. 26/30 backend pass. Login/cookies/me/refresh/logout/Bearer fallback all work. Protected endpoints correctly return 401. Read endpoints work auth'd. BUT: POST /api/users returns 500 due to MongoDB ObjectId leaking into JSON response — this blocks the entire 'team admin invite' flow and cascades to several owner_id/prospects tests. Brute-force lockout did NOT trigger (got 401 instead of 429 after 6 attempts) because request.client.host returns the K8s ingress proxy IP — likely changes between requests, breaking the (ip,email) key. CORS preflight returns Access-Control-Allow-Origin: '*' instead of explicit origin (Kubernetes ingress overrides FastAPI's CORS middleware on OPTIONS — actual POSTs still pass through FastAPI correctly so cookies/credentials work in practice from the frontend, confirmed visually by successful login from the browser). FRONTEND CRITICAL: /pipeline page crashes with 'ReferenceError: ownerFilter is not defined' — Pipeline.jsx uses ownerFilter/setOwnerFilter in JSX (line 117) but never calls useState for them. Login flow itself works end-to-end: redirect-to-login, login success, sidebar shows 'Delfi · Admin', session persists across refresh, /team page renders. Logout button selector not found (data-testid missing).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/users", "issue": "Returns 500. Traceback: 'ObjectId is not iterable'. After db.users.insert_one(doc), motor mutates the dict to add _id (ObjectId). The handler then returns `safe = {k:v for k,v in doc.items() if k != 'password_hash'}` which still contains _id → FastAPI json encoder crashes. Fix: also exclude '_id' from safe, or build the response from explicit fields, or use _strip_id(doc) before returning.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/auth/login", "issue": "Brute-force lockout never triggers in this environment because auth.py uses request.client.host which behind the K8s ingress is the proxy peer IP (varies per replica/request). Effective fix: read X-Forwarded-For (first hop) or use email alone as key. As implemented, 6 wrong-password attempts on a unique email still all return 401, never 429.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "OPTIONS /api/*", "issue": "Preflight Access-Control-Allow-Origin returns '*' instead of explicit FRONTEND_URL. FastAPI CORSMiddleware config is correct (allow_origins=[FRONTEND_URL], allow_credentials=True) but Kubernetes ingress appears to intercept OPTIONS and inject '*'. Actual cross-origin POST/GET from the browser still works (cookies/credentials succeed end-to-end — verified via browser login)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Pipeline.jsx", "issue": "ReferenceError: ownerFilter is not defined — used on line 117 (<Select value={ownerFilter} onValueChange={setOwnerFilter}>) and line 118 (data-testid='owner-filter') but never declared with useState. The entire /pipeline route crashes with the 'Uncaught runtime errors' red overlay, blocking all kanban functionality including drag-drop and prospect-sheet open. Fix: add `const [ownerFilter, setOwnerFilter] = useState(\"all\");` (or whatever default the spec wants — 'me' / 'all' / 'unassigned' / userId). Then plumb it into the GET /api/prospects?owner= query.", "selector": "[data-testid='owner-filter']", "priority": "CRITICAL"},
+      {"component": "Sidebar.jsx", "issue": "Logout button has no data-testid='sidebar-logout' (or equivalent stable selector). Tests had to fall back to text matching.", "selector": "n/a", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Team page invite", "issue": "Cannot create new user from /team because POST /api/users returns 500 (see backend_issues.critical). The invite form will fail; admin role change uses PATCH which works.", "affected_selectors": ["[data-testid='team-invite-submit']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_phase1.py",
+    "/app/test_reports/pytest/phase1_results.xml"
+  ],
+  "action_items": [
+    "[CRITICAL] Fix POST /api/users 500: exclude '_id' from the safe response. Quickest patch: `safe = {k: v for k, v in doc.items() if k not in ('password_hash', '_id')}` (server.py ~line 903). Same potential risk exists anywhere insert_one is followed by returning doc — audit the file.",
+    "[CRITICAL] Fix Pipeline.jsx ownerFilter crash: add `const [ownerFilter, setOwnerFilter] = useState('all');` and pass it to the prospects fetcher (`?owner=${ownerFilter === 'all' ? '' : ownerFilter}`).",
+    "[HIGH] Brute-force protection ineffective in K8s: switch ip extraction to X-Forwarded-For in auth.py login route, or key only by email.",
+    "[MINOR] Add data-testid='sidebar-logout' on the logout button.",
+    "[MINOR] (Cosmetic) Kubernetes ingress overrides OPTIONS Access-Control-Allow-Origin to '*'. Real flows still work; document as expected.",
+    "After fixes: re-run `pytest /app/backend/tests/test_auth_phase1.py -v` — expect 30/30."
+  ],
+  "critical_code_review_comments": [
+    "server.py create_user: returning the post-insert dict leaks Mongo _id. Same pattern is safe elsewhere because _strip_id() is used; here it isn't.",
+    "auth.py brute force uses request.client.host directly; in any reverse-proxy deployment (K8s ingress, nginx, ALB) this is the proxy IP. Use X-Forwarded-For / X-Real-IP.",
+    "Pipeline.jsx — using a state variable that isn't declared should have been caught by lint (no-undef). Recommend enabling react-app/eslint-config-react-app no-undef as error and running lint in CI.",
+    "ACCESS_TTL_MIN = 60*12 (12h) is fine for internal tool. JWT_SECRET present in .env — good.",
+    "seed_admin is idempotent and re-hashes password when .env changes — good.",
+    "Login response returns access_token in body AND cookie. If the frontend doesn't need the body token (cookies suffice), consider dropping it from the response to reduce XSS surface."
+  ],
+  "updated_files": ["/app/backend/tests/test_auth_phase1.py"],
+  "success_rate": {"backend": "87% (26/30)", "frontend": "Login/sidebar/team OK; Pipeline 100% broken (runtime error)"},
+  "test_credentials": "Admin: delfi@skandiamaklarna.se / Etablering2026 (from /app/memory/test_credentials.md and backend/.env). Confirmed working.",
+  "seed_data_creation": "Test fixtures create unique-email TEST_ users per session and clean them up via autouse session-scope teardown. Several test prospects (TEST_AutoOwner, TEST_BadOwner, etc.) are created and immediately deleted within their tests.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run `pytest /app/backend/tests/test_auth_phase1.py -v` for the full auth suite. The pre-existing /app/backend/tests/backend_test.py from iteration 1 was NOT updated to send auth — it will now mostly 401. If you want it to keep working, prepend a session-scope login fixture or merge with test_auth_phase1.py. Brute-force test uses a unique random email each run so it does NOT lock out the real admin. Frontend Pipeline page is fully broken; once ownerFilter is added, re-test owner-filter dropdown + owner badge on cards + ProspectSheet owner select + activity-feed actor-name.",
+  "rca of the issue": "1) POST /api/users 500: pymongo/motor insert_one mutates the passed dict to attach the generated ObjectId at key '_id'. The handler then returns a dict comprehension that drops only password_hash, leaving _id (ObjectId) — FastAPI's jsonable_encoder cannot serialize ObjectId, raising the 500. Reproduce: any admin POST /api/users with valid body. Fix: also drop '_id' or call _strip_id(doc) before returning. 2) Pipeline crash: pure React undeclared variable (no-undef). Reproduce: visit /pipeline after login. Fix: declare useState. 3) Brute force: K8s ingress proxies hide real client IP; request.client.host returns kube-proxy IP that rotates. Mitigation: parse X-Forwarded-For."
+}

@@ -8,7 +8,10 @@ import {
   GearSix,
   ArrowsClockwise,
   Compass,
+  SignOut,
+  UsersFour,
 } from "@phosphor-icons/react";
+import { useAuth } from "../lib/auth";
 
 const links = [
   { to: "/", label: "Översikt", icon: ChartBar, end: true, testId: "nav-dashboard" },
@@ -18,9 +21,11 @@ const links = [
   { to: "/map", label: "Karta & White Spots", icon: MapTrifold, testId: "nav-map" },
   { to: "/scrape", label: "Scraping", icon: ArrowsClockwise, testId: "nav-scrape" },
   { to: "/settings", label: "Mål & Inställningar", icon: GearSix, testId: "nav-settings" },
+  { to: "/team", label: "Mitt team", icon: UsersFour, testId: "nav-team" },
 ];
 
 export default function Sidebar() {
+  const { user, logout } = useAuth();
   return (
     <aside
       data-testid="sidebar"
@@ -62,10 +67,31 @@ export default function Sidebar() {
 
       <div className="px-5 py-4 border-t border-[#E5E5E5]">
         <div className="overline pb-1.5">Inloggad som</div>
-        <div className="font-display font-bold text-[#0A0A0A] text-sm">
-          Delfi
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div
+              className="font-display font-bold text-[#0A0A0A] text-sm truncate"
+              data-testid="sidebar-user-name"
+            >
+              {user?.name || "—"}
+            </div>
+            <div className="text-[12px] text-[#52525B] flex items-center gap-1.5">
+              <span
+                className="inline-block w-1.5 h-1.5 rounded-full"
+                style={{ background: user?.role === "admin" ? "#CBA135" : "#A1A1AA" }}
+              />
+              {user?.role === "admin" ? "Admin" : "Medlem"}
+            </div>
+          </div>
+          <button
+            data-testid="sidebar-logout"
+            onClick={logout}
+            title="Logga ut"
+            className="btn-ghost p-1.5"
+          >
+            <SignOut size={14} />
+          </button>
         </div>
-        <div className="text-[12px] text-[#52525B]">Etableringschef</div>
       </div>
     </aside>
   );

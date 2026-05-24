@@ -6,6 +6,7 @@ export const API_BASE = `${BACKEND_URL}/api`;
 export const api = axios.create({
   baseURL: API_BASE,
   headers: { "Content-Type": "application/json" },
+  withCredentials: true,
 });
 
 export const PIPELINE_STATUSES = [
@@ -56,12 +57,15 @@ export const formatDateTime = (iso) => {
   }
 };
 
-export const downloadCsv = (endpoint, filename) => {
-  const url = `${API_BASE}${endpoint}`;
+export const downloadCsv = async (endpoint, filename) => {
+  const res = await api.get(endpoint, { responseType: "blob" });
+  const blob = new Blob([res.data], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = filename;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 };

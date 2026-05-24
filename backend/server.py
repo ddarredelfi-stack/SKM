@@ -1,16 +1,8 @@
 """Etableringschef-dashboard backend for Skandiamäklarna.
 
-FastAPI + MongoDB, exposes:
-- /api/dashboard/kpis
-- /api/offices, /api/brokers, /api/listings (read + filters)
-- /api/prospects (CRUD + status update)
-- /api/activity (activity log)
-- /api/goals (CRUD)
-- /api/geo/municipalities, /api/geo/whitespots
-- /api/scrape/run, /api/scrape/sync, /api/scrape/status
-- /api/ai/research-brief
-- /api/reminders/send (manual + due reminders)
-- /api/export/{type}.csv
+FastAPI + MongoDB. Multi-user with JWT email/password auth (httpOnly cookies +
+Authorization Bearer fallback). All /api/* routes require auth except
+/api/auth/login, /api/auth/refresh, /api/ (health).
 """
 from __future__ import annotations
 import csv
@@ -24,16 +16,30 @@ from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, FastAPI, HTTPException, Query
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from starlette.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 from ai_service import generate_brief  # noqa: E402
+from auth import (  # noqa: E402
+    clear_attempts,
+    clear_auth_cookies,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    fetch_user_from_token,
+    hash_password,
+    is_locked_out,
+    record_failed_attempt,
+    seed_admin,
+    set_auth_cookies,
+    verify_password,
+)
 from email_service import build_reminder_html, send_reminder  # noqa: E402
 from municipalities_data import MUNICIPALITIES  # noqa: E402
 from scraper import scrape_offices, to_broker_docs, to_office_doc  # noqa: E402
@@ -64,7 +70,20 @@ PIPELINE_STATUSES = [
 ]
 
 app = FastAPI(title="Skandiamäklarna Etablering Dashboard")
-api = APIRouter(prefix="/api")
+api_public = APIRouter(prefix="/api")  # no auth: login/refresh/health
+
+
+async def current_user(request: Request) -> dict:
+    return await fetch_user_from_token(request, db)
+
+
+async def admin_only(user: dict = Depends(current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Endast admin")
+    return user
+
+
+api = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
 
 
 def _id() -> str:
@@ -101,6 +120,12 @@ async def _ensure_seed():
 @app.on_event("startup")
 async def on_startup():
     await _ensure_seed()
+    await seed_admin(db)
+    try:
+        await db.users.create_index("email", unique=True)
+        await db.login_attempts.create_index("id")
+    except Exception as e:
+        logger.warning(f"Index create skipped: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +145,7 @@ class ProspectIn(BaseModel):
     next_step: str = ""
     next_step_date: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
+    owner_id: Optional[str] = None  # if None, defaults to current user
 
 
 class ProspectUpdate(BaseModel):
@@ -136,10 +162,29 @@ class ProspectUpdate(BaseModel):
     next_step: Optional[str] = None
     next_step_date: Optional[str] = None
     tags: Optional[list[str]] = None
+    owner_id: Optional[str] = None  # use empty-string to unset
 
 
 class StatusUpdate(BaseModel):
     status: str
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str
+    name: str
+    role: str = "member"  # admin | member
+
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    password: Optional[str] = None
 
 
 class GoalIn(BaseModel):
@@ -174,7 +219,7 @@ class SendReminderRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-async def _activity(kind: str, message: str, **kwargs: Any):
+async def _activity(kind: str, message: str, actor: Optional[dict] = None, **kwargs: Any):
     doc = {
         "id": _id(),
         "kind": kind,
@@ -184,8 +229,21 @@ async def _activity(kind: str, message: str, **kwargs: Any):
         "prospect_name": kwargs.get("prospect_name"),
         "from_status": kwargs.get("from_status"),
         "to_status": kwargs.get("to_status"),
+        "actor_id": (actor or {}).get("id"),
+        "actor_name": (actor or {}).get("name"),
     }
     await db.activity.insert_one(doc)
+
+
+async def _resolve_owner(owner_id: Optional[str]) -> tuple[Optional[str], str]:
+    """Look up a user by id and return (id, name). Returns (None, '') if not found
+    or if owner_id is empty/None."""
+    if not owner_id:
+        return None, ""
+    u = await db.users.find_one({"id": owner_id}, {"_id": 0, "name": 1})
+    if not u:
+        return None, ""
+    return owner_id, u.get("name", "")
 
 
 def _strip_id(doc: dict) -> dict:
@@ -306,19 +364,29 @@ async def list_listings(q: str = "", city: str = "", broker_id: str = "",
 # Prospects (CRUD + kanban)
 # ---------------------------------------------------------------------------
 @api.get("/prospects")
-async def list_prospects(q: str = "", status: str = "", city: str = ""):
+async def list_prospects(q: str = "", status: str = "", city: str = "",
+                         owner: str = "",
+                         user: dict = Depends(current_user)):
     flt: dict[str, Any] = {}
     if status:
         flt["status"] = status
     if city:
         flt["city"] = city
+    if owner == "me":
+        flt["owner_id"] = user["id"]
+    elif owner == "unassigned":
+        flt["$or"] = [{"owner_id": None}, {"owner_id": ""}, {"owner_id": {"$exists": False}}]
+    elif owner:
+        flt["owner_id"] = owner
     if q:
-        flt["$or"] = [
-            {"name": {"$regex": q, "$options": "i"}},
-            {"city": {"$regex": q, "$options": "i"}},
-            {"current_agency": {"$regex": q, "$options": "i"}},
-            {"email": {"$regex": q, "$options": "i"}},
-        ]
+        flt.setdefault("$and", []).append({
+            "$or": [
+                {"name": {"$regex": q, "$options": "i"}},
+                {"city": {"$regex": q, "$options": "i"}},
+                {"current_agency": {"$regex": q, "$options": "i"}},
+                {"email": {"$regex": q, "$options": "i"}},
+            ]
+        })
     items = [_strip_id(p) async for p in
              db.prospects.find(flt, {"_id": 0}).sort("updated_at", -1)]
     # Group by status for kanban convenience
@@ -331,17 +399,25 @@ async def list_prospects(q: str = "", status: str = "", city: str = ""):
 
 
 @api.post("/prospects")
-async def create_prospect(body: ProspectIn):
+async def create_prospect(body: ProspectIn, user: dict = Depends(current_user)):
     if body.status not in PIPELINE_STATUSES:
         raise HTTPException(400, "Ogiltig status")
     doc = body.model_dump()
+    # Owner defaults to current user when not provided
+    if doc.get("owner_id"):
+        oid, oname = await _resolve_owner(doc["owner_id"])
+        doc["owner_id"] = oid
+        doc["owner_name"] = oname
+    else:
+        doc["owner_id"] = user["id"]
+        doc["owner_name"] = user["name"]
     doc["id"] = _id()
     doc["created_at"] = _now()
     doc["updated_at"] = _now()
     doc["ai_brief"] = None
     await db.prospects.insert_one(doc)
     await _activity("created", f"Nytt prospekt: {doc['name']}",
-                    prospect_id=doc["id"], prospect_name=doc["name"])
+                    actor=user, prospect_id=doc["id"], prospect_name=doc["name"])
     return _strip_id(doc)
 
 
@@ -354,37 +430,47 @@ async def get_prospect(pid: str):
 
 
 @api.patch("/prospects/{pid}")
-async def update_prospect(pid: str, body: ProspectUpdate):
+async def update_prospect(pid: str, body: ProspectUpdate, user: dict = Depends(current_user)):
     existing = await db.prospects.find_one({"id": pid}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Prospekt hittades inte")
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if "status" in updates and updates["status"] not in PIPELINE_STATUSES:
         raise HTTPException(400, "Ogiltig status")
+    if "owner_id" in updates:
+        oid, oname = await _resolve_owner(updates["owner_id"])
+        updates["owner_id"] = oid
+        updates["owner_name"] = oname
     updates["updated_at"] = _now()
     await db.prospects.update_one({"id": pid}, {"$set": updates})
     if "status" in updates and updates["status"] != existing.get("status"):
         await _activity("status_change",
                         f"{existing['name']}: {existing.get('status')} → {updates['status']}",
-                        prospect_id=pid, prospect_name=existing["name"],
+                        actor=user, prospect_id=pid, prospect_name=existing["name"],
                         from_status=existing.get("status"), to_status=updates["status"])
+    if "owner_id" in updates and updates["owner_id"] != existing.get("owner_id"):
+        await _activity(
+            "assigned",
+            f"{existing['name']} tilldelad {updates.get('owner_name') or '(ingen)'}",
+            actor=user, prospect_id=pid, prospect_name=existing["name"],
+        )
     p = await db.prospects.find_one({"id": pid}, {"_id": 0})
     return _strip_id(p)
 
 
 @api.patch("/prospects/{pid}/status")
-async def update_status(pid: str, body: StatusUpdate):
-    return await update_prospect(pid, ProspectUpdate(status=body.status))
+async def update_status(pid: str, body: StatusUpdate, user: dict = Depends(current_user)):
+    return await update_prospect(pid, ProspectUpdate(status=body.status), user)
 
 
 @api.delete("/prospects/{pid}")
-async def delete_prospect(pid: str):
+async def delete_prospect(pid: str, user: dict = Depends(current_user)):
     existing = await db.prospects.find_one({"id": pid}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Prospekt hittades inte")
     await db.prospects.delete_one({"id": pid})
     await _activity("deleted", f"Prospekt borttaget: {existing['name']}",
-                    prospect_id=pid, prospect_name=existing["name"])
+                    actor=user, prospect_id=pid, prospect_name=existing["name"])
     return {"ok": True}
 
 
@@ -497,7 +583,7 @@ async def scrape_status():
 
 
 @api.post("/scrape/run")
-async def scrape_run(limit: int = Query(5, ge=1, le=200)):
+async def scrape_run(limit: int = Query(5, ge=1, le=200), user: dict = Depends(current_user)):
     result = await scrape_offices(limit=limit, db=db)
     # Persist run metadata (NOT the full office payloads to keep doc small)
     record = {
@@ -524,13 +610,14 @@ async def scrape_run(limit: int = Query(5, ge=1, le=200)):
                 upsert=True,
             )
 
-    await _activity("scrape", f"Scrape körd — {result['offices_parsed']}/{result['offices_found']} kontor hämtade")
+    await _activity("scrape", f"Scrape körd — {result['offices_parsed']}/{result['offices_found']} kontor hämtade",
+                    actor=user)
 
     return {**result, "record_id": record["id"]}
 
 
 @api.post("/scrape/sync")
-async def scrape_sync():
+async def scrape_sync(user: dict = Depends(current_user)):
     """Run a full scrape and REPLACE the offices + brokers + scraped_offices collections.
 
     Use this to bring the dashboard's primary data fully in sync with the live site.
@@ -555,6 +642,7 @@ async def scrape_sync():
         await _activity(
             "scrape",
             f"Full sync misslyckades — status={result['status']}, fel: {result['errors']}",
+            actor=user,
         )
         return {**result, "record_id": record["id"], "replaced": False}
 
@@ -585,6 +673,7 @@ async def scrape_sync():
     await _activity(
         "scrape",
         f"Full sync klar — {len(office_docs)} kontor, {len(broker_docs)} mäklare ersatte tidigare data",
+        actor=user,
     )
 
     return {
@@ -606,7 +695,7 @@ async def scrape_discovered():
 # AI research brief
 # ---------------------------------------------------------------------------
 @api.post("/ai/research-brief")
-async def ai_brief(body: ResearchRequest):
+async def ai_brief(body: ResearchRequest, user: dict = Depends(current_user)):
     try:
         brief = await generate_brief(
             name=body.name,
@@ -624,7 +713,7 @@ async def ai_brief(body: ResearchRequest):
             {"$set": {"ai_brief": brief, "ai_brief_at": _now()}},
         )
         await _activity("ai_brief", f"AI-research genererad för {body.name}",
-                        prospect_id=body.prospect_id, prospect_name=body.name)
+                        actor=user, prospect_id=body.prospect_id, prospect_name=body.name)
     return {"brief": brief}
 
 
@@ -632,7 +721,7 @@ async def ai_brief(body: ResearchRequest):
 # Email reminders
 # ---------------------------------------------------------------------------
 @api.post("/reminders/send")
-async def send_reminder_for(body: SendReminderRequest):
+async def send_reminder_for(body: SendReminderRequest, user: dict = Depends(current_user)):
     p = await db.prospects.find_one({"id": body.prospect_id}, {"_id": 0})
     if not p:
         raise HTTPException(404, "Prospekt hittades inte")
@@ -651,7 +740,7 @@ async def send_reminder_for(body: SendReminderRequest):
     )
     res = await send_reminder(recipient, f"Påminnelse: {p['name']} – {p.get('next_step', 'Uppföljning')}", html)
     await _activity("reminder", f"Påminnelse {res['status']} för {p['name']}",
-                    prospect_id=p["id"], prospect_name=p["name"])
+                    actor=user, prospect_id=p["id"], prospect_name=p["name"])
     return res
 
 
@@ -721,21 +810,154 @@ async def export_prospects_csv():
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
-@api.get("/")
+@api_public.get("/")
 async def root():
     return {"app": "skandia-etablering", "ok": True, "as_of": _now()}
 
 
 # ---------------------------------------------------------------------------
+# Auth endpoints (public)
+# ---------------------------------------------------------------------------
+@api_public.post("/auth/login")
+async def login(body: LoginRequest, request: Request, response: Response):
+    ip = (request.client.host if request.client else "unknown")
+    email = body.email.lower().strip()
+
+    if await is_locked_out(db, ip, email):
+        raise HTTPException(429, "För många misslyckade försök — försök igen om 15 min")
+
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(body.password, user.get("password_hash", "")):
+        await record_failed_attempt(db, ip, email)
+        raise HTTPException(401, "Fel e-post eller lösenord")
+
+    await clear_attempts(db, ip, email)
+    access = create_access_token(user["id"], user["email"])
+    refresh = create_refresh_token(user["id"])
+    set_auth_cookies(response, access, refresh)
+    safe = {k: v for k, v in user.items() if k not in ("_id", "password_hash")}
+    return {"user": safe, "access_token": access}
+
+
+@api_public.post("/auth/logout")
+async def logout(response: Response):
+    clear_auth_cookies(response)
+    return {"ok": True}
+
+
+@api_public.post("/auth/refresh")
+async def refresh_token(request: Request, response: Response):
+    import jwt as _jwt
+    tok = request.cookies.get("refresh_token")
+    if not tok:
+        raise HTTPException(401, "Saknar refresh-token")
+    try:
+        payload = decode_token(tok, "refresh")
+    except _jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Refresh-token utgången")
+    except _jwt.InvalidTokenError:
+        raise HTTPException(401, "Ogiltig refresh-token")
+    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(401, "Användare saknas")
+    new_access = create_access_token(user["id"], user["email"])
+    new_refresh = create_refresh_token(user["id"])
+    set_auth_cookies(response, new_access, new_refresh)
+    return {"user": user, "access_token": new_access}
+
+
+@api.get("/auth/me")
+async def me(user: dict = Depends(current_user)):
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Users (team management) — read for all authed, write for admin
+# ---------------------------------------------------------------------------
+@api.get("/users")
+async def list_users(user: dict = Depends(current_user)):
+    items = []
+    async for u in db.users.find({}, {"_id": 0, "password_hash": 0}).sort("name", 1):
+        items.append(u)
+    return {"items": items, "total": len(items)}
+
+
+@api.post("/users")
+async def create_user(body: UserCreate, admin: dict = Depends(admin_only)):
+    email = body.email.lower().strip()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(409, "E-post används redan")
+    if body.role not in ("admin", "member"):
+        raise HTTPException(400, "Ogiltig roll")
+    doc = {
+        "id": _id(),
+        "email": email,
+        "name": body.name.strip(),
+        "role": body.role,
+        "password_hash": hash_password(body.password),
+        "created_at": _now(),
+        "created_by": admin["id"],
+    }
+    await db.users.insert_one(doc)
+    await _activity("user_created", f"Användare skapad: {doc['name']} ({doc['role']})", actor=admin)
+    safe = {k: v for k, v in doc.items() if k != "password_hash"}
+    return safe
+
+
+@api.patch("/users/{uid}")
+async def update_user(uid: str, body: UserUpdate, admin: dict = Depends(admin_only)):
+    existing = await db.users.find_one({"id": uid})
+    if not existing:
+        raise HTTPException(404, "Användare hittades inte")
+    updates: dict[str, Any] = {}
+    if body.name is not None:
+        updates["name"] = body.name.strip()
+    if body.role is not None:
+        if body.role not in ("admin", "member"):
+            raise HTTPException(400, "Ogiltig roll")
+        updates["role"] = body.role
+    if body.password:
+        updates["password_hash"] = hash_password(body.password)
+    if not updates:
+        raise HTTPException(400, "Inget att uppdatera")
+    await db.users.update_one({"id": uid}, {"$set": updates})
+    await _activity("user_updated", f"Användare uppdaterad: {existing['name']}", actor=admin)
+    u = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+    return u
+
+
+@api.delete("/users/{uid}")
+async def delete_user(uid: str, admin: dict = Depends(admin_only)):
+    if uid == admin["id"]:
+        raise HTTPException(400, "Du kan inte ta bort dig själv")
+    existing = await db.users.find_one({"id": uid})
+    if not existing:
+        raise HTTPException(404, "Användare hittades inte")
+    await db.users.delete_one({"id": uid})
+    # Unassign prospects owned by this user
+    await db.prospects.update_many(
+        {"owner_id": uid},
+        {"$set": {"owner_id": None, "owner_name": ""}},
+    )
+    await _activity("user_deleted", f"Användare borttagen: {existing['name']}", actor=admin)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # App wiring
 # ---------------------------------------------------------------------------
+app.include_router(api_public)
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=[
+        os.environ.get("FRONTEND_URL", "http://localhost:3000"),
+        "http://localhost:3000",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 

@@ -62,7 +62,7 @@ function renderMarkdown(md) {
   return out.join("");
 }
 
-export default function ProspectSheet({ prospect, open, onOpenChange, onUpdated, onDeleted }) {
+export default function ProspectSheet({ prospect, users = [], open, onOpenChange, onUpdated, onDeleted }) {
   const [form, setForm] = useState(prospect || {});
   const [saving, setSaving] = useState(false);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -94,6 +94,7 @@ export default function ProspectSheet({ prospect, open, onOpenChange, onUpdated,
         notes: form.notes,
         next_step: form.next_step,
         next_step_date: form.next_step_date,
+        owner_id: form.owner_id || "",
       });
       toast.success("Prospekt uppdaterat");
       onUpdated?.(res.data);
@@ -288,6 +289,25 @@ export default function ProspectSheet({ prospect, open, onOpenChange, onUpdated,
                 value={form.linkedin || ""}
                 onChange={(e) => update("linkedin", e.target.value)}
               />
+            </div>
+            <div className="sm:col-span-2">
+              <Label className="overline">Ansvarig</Label>
+              <Select
+                value={form.owner_id || "__none__"}
+                onValueChange={(v) => update("owner_id", v === "__none__" ? "" : v)}
+              >
+                <SelectTrigger data-testid="prospect-owner-select" className="input-base mt-1.5">
+                  <SelectValue placeholder="Otilldelad" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Otilldelad</SelectItem>
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.name} {u.role === "admin" ? "· admin" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="overline">Nästa steg</Label>
