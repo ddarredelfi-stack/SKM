@@ -143,12 +143,20 @@ class TestAuth:
         assert r2.status_code == 401
 
     def test_brute_force_lockout(self):
-        """5 failed attempts on a unique email returns 429."""
+        """5 failed attempts on a unique email returns 429.
+
+        Sends a consistent X-Forwarded-For so the (ip,email) brute-force
+        key is stable behind K8s ingress.
+        """
         unique_email = f"lockout_{uuid.uuid4().hex[:8]}@example.com"
+        unique_ip = f"9.9.9.{uuid.uuid4().int % 250 + 1}"
         last_status = None
         for i in range(6):
-            r = requests.post(f"{API}/auth/login",
-                              json={"email": unique_email, "password": "wrong"})
+            r = requests.post(
+                f"{API}/auth/login",
+                json={"email": unique_email, "password": "wrong"},
+                headers={"X-Forwarded-For": unique_ip},
+            )
             last_status = r.status_code
             if last_status == 429:
                 break

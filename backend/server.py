@@ -820,7 +820,11 @@ async def root():
 # ---------------------------------------------------------------------------
 @api_public.post("/auth/login")
 async def login(body: LoginRequest, request: Request, response: Response):
-    ip = (request.client.host if request.client else "unknown")
+    # Behind a reverse proxy (K8s ingress), request.client.host is the proxy.
+    # Prefer the first hop in X-Forwarded-For so brute-force keying works.
+    fwd = request.headers.get("x-forwarded-for", "")
+    ip = (fwd.split(",")[0].strip() if fwd
+          else (request.client.host if request.client else "unknown"))
     email = body.email.lower().strip()
 
     if await is_locked_out(db, ip, email):
@@ -900,7 +904,7 @@ async def create_user(body: UserCreate, admin: dict = Depends(admin_only)):
     }
     await db.users.insert_one(doc)
     await _activity("user_created", f"Användare skapad: {doc['name']} ({doc['role']})", actor=admin)
-    safe = {k: v for k, v in doc.items() if k != "password_hash"}
+    safe = {k: v for k, v in doc.items() if k not in ("password_hash", "_id")}
     return safe
 
 

@@ -38,8 +38,11 @@ const empty = {
 };
 
 export default function Pipeline() {
+  const { user } = useAuth();
   const [data, setData] = useState({ grouped: {}, items: [], statuses: PIPELINE_STATUSES });
   const [q, setQ] = useState("");
+  const [ownerFilter, setOwnerFilter] = useState("all");
+  const [users, setUsers] = useState([]);
   const [openDialog, setOpenDialog] = useState(false);
   const [form, setForm] = useState(empty);
   const [selected, setSelected] = useState(null);
@@ -48,14 +51,27 @@ export default function Pipeline() {
   const [dragOver, setDragOver] = useState(null);
 
   const load = async () => {
-    const res = await api.get("/prospects", { params: { q } });
+    const params = { q };
+    if (ownerFilter === "me") params.owner = "me";
+    else if (ownerFilter === "unassigned") params.owner = "unassigned";
+    else if (ownerFilter !== "all") params.owner = ownerFilter;
+    const res = await api.get("/prospects", { params });
     setData(res.data);
+  };
+
+  const loadUsers = async () => {
+    try {
+      const res = await api.get("/users");
+      setUsers(res.data.items || []);
+    } catch {}
   };
 
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  }, [q, ownerFilter]);
+
+  useEffect(() => { loadUsers(); }, []);
 
   const create = async () => {
     if (!form.name.trim()) {

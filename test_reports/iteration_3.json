@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 3 re-test of Phase 1 auth + multi-user after the 3 fixes from iteration_2. Backend: 32/33 pytest cases pass via /app/backend/tests/test_auth_phase1.py. All 3 critical iteration_2 bugs are confirmed fixed: (1) POST /api/users now returns clean 200 with no _id / no password_hash (TestUsersCrud all green), (2) Brute-force lockout now returns 429 on the 6th attempt when X-Forwarded-For is propagated (TestAuth.test_brute_force_lockout PASS), (3) Pipeline.jsx no longer crashes — owner-filter dropdown renders with all three options and the page is fully interactive. The single remaining backend failure is the previously-known cosmetic CORS preflight override by the K8s ingress (`Access-Control-Allow-Origin: *` instead of explicit FRONTEND_URL on OPTIONS) — real cross-origin POST/GET requests still succeed with credentials, so login/cookies work in the browser end-to-end. Frontend: /pipeline renders [data-testid='pipeline-page'] with no runtime errors, owner-filter shows 'Alla prospekt' / 'Mina prospekt' / 'Otilldelade', selecting 'Mina prospekt' filters cards, 'Otilldelad' badge visible on cards, clicking a card opens the drawer with [data-testid='prospect-owner-select'], [data-testid='sidebar-logout'] exists and on click clears cookies + redirects to /login, /team invite form posts and shows success toast 'Användare TEST_Invite_<n> skapad'. All previously-blocked iteration_2 tests now pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "OPTIONS /api/*", "issue": "Kubernetes ingress still overrides preflight Access-Control-Allow-Origin to '*' instead of explicit FRONTEND_URL. FastAPI CORSMiddleware is configured correctly. Actual cross-origin POST/GET with credentials still works in the browser, confirmed by successful login. Cosmetic only."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_phase1.py",
+    "/app/test_reports/pytest/phase1_iter3_results.xml"
+  ],
+  "action_items": [
+    "(Optional, cosmetic) Investigate K8s ingress OPTIONS override if strict origin allow-listing is required at preflight. Real flows are unaffected."
+  ],
+  "critical_code_review_comments": [
+    "POST /api/users fix verified — safe response dict now excludes '_id' and password_hash. Worth grepping server.py for other insert_one(...) sites that return the post-insert dict to make sure the same _id leak can't reappear.",
+    "Brute-force IP extraction now reads X-Forwarded-For first hop — correct for K8s ingress. Confirm the same logic is used wherever per-IP rate limits are applied (e.g. refresh endpoint if any).",
+    "Pipeline.jsx ownerFilter useState + loadUsers + filter query param all wired correctly; consider enabling react-app/no-undef as an ESLint error in CI to catch this class of bug before runtime.",
+    "Sidebar.jsx data-testid='sidebar-logout' now present — good. Consider standardising data-testid on all interactive elements for downstream test stability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_phase1.py (brute-force test now sends consistent X-Forwarded-For)"
+  ],
+  "success_rate": {"backend": "97% (32/33, only known CORS preflight override fails)", "frontend": "100% on the re-test scope (pipeline / owner-filter / prospect-sheet / sidebar-logout / team-invite all work)"},
+  "test_credentials": "Admin: delfi@skandiamaklarna.se / Etablering2026 — confirmed working.",
+  "seed_data_creation": "Session-scoped fixtures create TEST_ users and TEST_ prospects, with autouse session-end cleanup. UI-created TEST_Invite_15307 user was cleaned up via API after the test run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run with the env exported: `REACT_APP_BACKEND_URL=https://recruiter-dash-10.preview.emergentagent.com FRONTEND_URL=$REACT_APP_BACKEND_URL pytest /app/backend/tests/test_auth_phase1.py -v`. Single expected failure is TestCors.test_cors_credentials due to K8s ingress override on OPTIONS — not an app bug. The brute-force test relies on X-Forwarded-For; if the ingress strips that header, lockout testing must move to email-only keying. Frontend Pipeline is fully interactive; owner-filter, prospect-owner-select, sidebar-logout, team-invite all have stable data-testid selectors.",
+  "rca of the issue": "Iteration 2 root causes were correctly identified and fixed: (1) ObjectId leak in POST /api/users response — fixed by excluding '_id' from the safe dict; (2) ownerFilter undefined in Pipeline.jsx — fixed by adding useState plus owner query param plumbing; (3) request.client.host returns the K8s kube-proxy IP behind the ingress so the per-(ip,email) brute force counter never aggregated — fixed by reading the X-Forwarded-For first hop. All three fixes verified live this iteration."
+}
