@@ -5,6 +5,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Hide injected Emergent badge */
+#emergent-badge,
+a#emergent-badge,
+[id="emergent-badge"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
 :root {
     --bg-page: #FAFAFA;
     --bg-surface: #FFFFFF;
