@@ -8,17 +8,25 @@ import {
   Briefcase,
   Target,
   Compass,
+  Clock,
+  XCircle,
+  Lightning,
 } from "@phosphor-icons/react";
-import { api, formatNumber, PIPELINE_STATUSES, STATUS_TONE } from "../lib/api";
+import { api, formatNumber, PIPELINE_STATUSES, STATUS_TONE, daysSince } from "../lib/api";
 import KpiCard from "../components/KpiCard";
 import ActivityFeed from "../components/ActivityFeed";
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
+  const [insights, setInsights] = useState(null);
 
   const load = async () => {
-    const res = await api.get("/dashboard/kpis");
-    setData(res.data);
+    const [k, i] = await Promise.all([
+      api.get("/dashboard/kpis"),
+      api.get("/dashboard/insights"),
+    ]);
+    setData(k.data);
+    setInsights(i.data);
   };
 
   useEffect(() => {
@@ -80,17 +88,21 @@ export default function Dashboard() {
           sub={`${(data.brokers / Math.max(data.offices, 1)).toFixed(1)} mäklare/kontor i snitt`}
         />
         <KpiCard
-          testId="kpi-listings"
-          label="Aktiva objekt"
-          value={data.listings}
-          sub={data.listings ? "Live från databasen" : "Ej synkat — finns ej i live-scrape än"}
-        />
-        <KpiCard
           testId="kpi-pipeline"
           label="Värvningsprospekt"
           value={data.prospects_total}
-          sub={`${totalInPipeline} i pipeline`}
+          sub={`${totalInPipeline} aktiva i pipeline`}
           accent
+        />
+        <KpiCard
+          testId="kpi-stale"
+          label={`Fastnat (>${data.stale_days || 14} dgr)`}
+          value={data.stale_count || 0}
+          sub={
+            (data.stale_count || 0) > 0
+              ? "Kräver uppföljning"
+              : "Allt rör sig framåt"
+          }
         />
       </section>
 
@@ -248,6 +260,124 @@ export default function Dashboard() {
           </Link>
         </div>
       </section>
+
+      {/* Insights — sources + lost-to + stale */}
+      {insights && (
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="card-surface p-6 fade-up" data-testid="insights-sources">
+            <div className="overline mb-1">Källfördelning</div>
+            <h2 className="font-display font-extrabold tracking-tight text-xl mb-4 flex items-center gap-2">
+              <Lightning size={18} color="#CBA135" weight="duotone" /> Varifrån kommer leadsen?
+            </h2>
+            {insights.sources?.length ? (
+              <div className="flex flex-col gap-2.5">
+                {insights.sources.map((s) => {
+                  const max = Math.max(...insights.sources.map((x) => x.count), 1);
+                  const pct = (s.count / max) * 100;
+                  return (
+                    <div key={s.source} className="flex items-center gap-3">
+                      <div className="w-32 text-[12px] font-display font-semibold text-[#0A0A0A] truncate">
+                        {s.source}
+                      </div>
+                      <div className="flex-1 h-1.5 bg-[#F4F4F5] rounded-full overflow-hidden">
+                        <div className="h-full bg-[#CBA135]" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="w-8 text-right font-display font-bold tabular-nums text-sm">
+                        {s.count}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-sm text-[#A1A1AA] py-4 font-body">
+                Lägg till källa när du skapar prospekt så syns fördelningen här.
+              </div>
+            )}
+          </div>
+
+          <div className="card-surface p-6 fade-up delay-1" data-testid="insights-lost">
+            <div className="flex items-center justify-between mb-1">
+              <div className="overline">Konkurrentintelligens</div>
+              <Link to="/lost" className="text-[11px] font-display font-bold text-[#52525B] hover:text-[#CBA135] inline-flex items-center gap-0.5">
+                Visa alla <ArrowUpRight size={11} />
+              </Link>
+            </div>
+            <h2 className="font-display font-extrabold tracking-tight text-xl mb-4 flex items-center gap-2">
+              <XCircle size={18} color="#DC2626" weight="duotone" /> Förlorade till
+            </h2>
+            {insights.lost_breakdown?.length ? (
+              <div className="flex flex-col gap-2.5">
+                {insights.lost_breakdown.slice(0, 6).map((l) => {
+                  const max = Math.max(...insights.lost_breakdown.map((x) => x.count), 1);
+                  const pct = (l.count / max) * 100;
+                  return (
+                    <div key={l.agency} className="flex items-center gap-3">
+                      <div className="w-32 text-[12px] font-display font-semibold text-[#0A0A0A] truncate">
+                        {l.agency}
+                      </div>
+                      <div className="flex-1 h-1.5 bg-[#F4F4F5] rounded-full overflow-hidden">
+                        <div className="h-full bg-[#DC2626]" style={{ width: `${pct}%` }} />
+                      </div>
+                      <div className="w-8 text-right font-display font-bold tabular-nums text-sm">
+                        {l.count}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-sm text-[#A1A1AA] py-4 font-body">
+                Inga förlorade prospekt än. Bra jobbat.
+              </div>
+            )}
+          </div>
+
+          <div className="card-surface p-6 fade-up delay-2" data-testid="insights-stale">
+            <div className="overline mb-1">Stale-alerts</div>
+            <h2 className="font-display font-extrabold tracking-tight text-xl mb-4 flex items-center gap-2">
+              <Clock size={18} color="#F59E0B" weight="duotone" />
+              Fastnat &gt;{insights.stale_days} dgr
+            </h2>
+            {insights.top_stale?.length ? (
+              <ul className="flex flex-col divide-y divide-[#E5E5E5]">
+                {insights.top_stale.map((p) => {
+                  const d = daysSince(p.updated_at);
+                  return (
+                    <li key={p.id} className="py-2.5 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-display font-bold text-[13px] text-[#0A0A0A] truncate">{p.name}</div>
+                        <div className="text-[11px] text-[#52525B] font-body truncate">
+                          {p.status} · {p.owner_name || "Otilldelad"}
+                        </div>
+                      </div>
+                      <span
+                        className="text-[11px] font-display font-bold uppercase tracking-wider px-1.5 py-0.5 rounded whitespace-nowrap"
+                        style={{
+                          background: d >= 30 ? "#FEF2F2" : "#FEF3C7",
+                          color: d >= 30 ? "#7F1D1D" : "#7C2D12",
+                        }}
+                      >
+                        {d}d
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <div className="text-sm text-[#A1A1AA] py-4 font-body">
+                Inga fastnat just nu. Skickligt jobbat.
+              </div>
+            )}
+            <Link
+              to="/pipeline"
+              className="mt-4 inline-flex items-center gap-1 text-[12px] font-display font-bold text-[#CBA135]"
+            >
+              Öppna pipeline <ArrowUpRight size={11} />
+            </Link>
+          </div>
+        </section>
+      )}
     </div>
   );
 }

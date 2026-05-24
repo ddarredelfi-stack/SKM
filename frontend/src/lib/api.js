@@ -27,6 +27,38 @@ export const STATUS_TONE = {
   Onboardad: { bg: "#0A0A0A", fg: "#FFFFFF", dot: "#CBA135" },
 };
 
+export const PROSPECT_SOURCES = [
+  "LinkedIn",
+  "Rekommendation",
+  "Event/Mässa",
+  "Webbformulär",
+  "Cold outreach",
+  "Hemnet/Booli",
+  "Scrape",
+  "Annat",
+];
+
+export const COMPETITOR_AGENCIES = [
+  "Fastighetsbyrån",
+  "Svensk Fastighetsförmedling",
+  "Länsförsäkringar Fastighetsförmedling",
+  "HusmanHagberg",
+  "ERA",
+  "Mäklarhuset",
+  "Bjurfors",
+  "Notar",
+  "Erik Olsson Fastighetsförmedling",
+  "Mäklarringen",
+  "Egen byrå",
+  "Annan",
+];
+
+export const daysSince = (iso) => {
+  if (!iso) return 0;
+  const ms = Date.now() - new Date(iso).getTime();
+  return Math.max(0, Math.floor(ms / (1000 * 60 * 60 * 24)));
+};
+
 export const formatNumber = (n) =>
   typeof n === "number" ? new Intl.NumberFormat("sv-SE").format(n) : n;
 

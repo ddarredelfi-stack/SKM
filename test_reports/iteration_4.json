@@ -1,0 +1,62 @@
+{
+  "summary": "Phase 2 testing — backend fully passing (14/14 pytest), frontend has CRITICAL ReferenceError in ProspectSheet that breaks mark-lost & restore flows. Pipeline had a missing import (PROSPECT_SOURCES) which I fixed; ProspectSheet has undefined functions markLost() and restore() that I did NOT fix because they require business-logic implementation.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ProspectSheet.jsx",
+        "issue": "ReferenceError: markLost is not defined (line 539, used as onClick for confirm-mark-lost). Function never declared in component. Same component also calls restore (line 422) which is also undefined. Clicking [data-testid=mark-lost-btn] then [data-testid=confirm-mark-lost] crashes the entire React tree with 'Uncaught runtime errors'.",
+        "selector": "[data-testid=confirm-mark-lost], [data-testid=restore-prospect-btn]",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Pipeline.jsx",
+        "issue": "FIXED by testing agent — PROSPECT_SOURCES and daysSince were used but not imported from ../lib/api. Page crashed with 'PROSPECT_SOURCES is not defined' until I added them to the import statement on line 21.",
+        "selector": "[data-testid=pipeline-page]",
+        "priority": "HIGH (fixed)"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Mark prospect as lost from ProspectSheet → /lost page",
+        "issue": "Cannot complete: confirm-mark-lost onClick handler markLost is undefined. End-to-end flow (sheet → mark lost → disappear from pipeline → appear on /lost → restore) is unverifiable from UI. Backend endpoints work fine (verified by pytest).",
+        "affected_selectors": ["[data-testid=confirm-mark-lost]", "[data-testid=restore-prospect-btn]", "[data-testid=lost-banner]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase2.py",
+    "/app/test_reports/pytest/phase2_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: In /app/frontend/src/components/ProspectSheet.jsx, implement the missing handlers markLost() (POST /api/prospects/{id}/lost with lostAgency + lostReason, then setLostDialogOpen(false), reload prospect & close sheet) and restore() (POST /api/prospects/{id}/restore then reload). State hooks (lostDialogOpen, lostAgency, lostReason, lostBusy) already exist on lines 79-82. Both handlers are referenced (lines 422, 539) but never declared.",
+    "Verify lost-banner element renders when form.is_lost === true (referenced by tests via [data-testid=lost-banner]).",
+    "Optional: confirm stale-badge logic (Pipeline.jsx line 319) renders correctly for prospects with updated_at > 14d (no fresh prospect currently triggers it — backend verified fresh prospects are excluded)."
+  ],
+  "critical_code_review_comments": [
+    "ProspectSheet.jsx has unreferenced/undeclared functions (markLost, restore) — this should have been caught by ESLint no-undef rule. Recommend enabling/running lint in CI.",
+    "Pipeline.jsx import omission for PROSPECT_SOURCES & daysSince was also a no-undef. Same lint fix applies.",
+    "Backend route ordering bug previously fixed (/stale-prospects vs /prospects/{pid}) — verified by tests, no collision.",
+    "/api/dashboard/insights and /api/stale-prospects responses look clean; ObjectId properly stripped (no _id leakage)."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/Pipeline.jsx (added PROSPECT_SOURCES, daysSince to import)",
+    "/app/backend/tests/test_phase2.py (new)"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "~60% — sidebar/dashboard/lost-page/insights/new-prospect-dialog all OK; ProspectSheet mark-lost & restore broken"},
+  "test_credentials": "admin: delfi@skandiamaklarna.se / Etablering2026 (from /app/memory/test_credentials.md, verified working)",
+  "seed_data_creation": "Tests create TEST_-prefixed prospects (auto-cleaned via DELETE in teardown). Backend test_kpis_prospects_total_excludes_lost marks a TEST_ prospect lost mid-test — that prospect is still cleaned up via fixture teardown.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 backend is rock-solid (14/14 pytest). After main agent adds markLost+restore handlers to ProspectSheet.jsx, re-run only the frontend portion: login → /pipeline → click any kanban card → click mark-lost-btn → fill dialog → confirm-mark-lost. Then verify the [data-testid=lost-banner] appears and the prospect shows up on /lost with a working [data-testid=restore-<id>] button. Pipeline.jsx PROSPECT_SOURCES import is already fixed.",
+  "rca_of_the_issue": {
+    "bug": "ProspectSheet.jsx crashes when user clicks confirm-mark-lost (or when sheet renders for already-lost prospect with restore button visible).",
+    "reproduction": "1) Login as admin 2) Go to /pipeline 3) Click any kanban card to open ProspectSheet 4) Click [data-testid=mark-lost-btn] (works, opens dialog) 5) Pick agency, fill reason 6) Click [data-testid=confirm-mark-lost] → React error overlay: 'markLost is not defined'.",
+    "root_cause": "Handlers markLost() and restore() were not declared in ProspectSheet.jsx but JSX onClick props reference them (lines 422, 539). Likely an incomplete copy-paste during Phase 2 feature addition.",
+    "mitigation": "Declare both async functions inside ProspectSheet component, e.g. markLost = async () => { setLostBusy(true); try { await api.post(`/prospects/${prospect.id}/lost`, {lost_to_agency:lostAgency, lost_reason:lostReason}); toast.success('Markerad som förlorad'); setLostDialogOpen(false); onSaved?.(); onOpenChange(false); } catch(e){ toast.error(e.message);} finally{ setLostBusy(false);} } and analogous restore()."
+  }
+}

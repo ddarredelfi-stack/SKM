@@ -146,6 +146,9 @@ class ProspectIn(BaseModel):
     next_step_date: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
     owner_id: Optional[str] = None  # if None, defaults to current user
+    source: str = "Annat"
+    source_detail: str = ""
+    referred_by: str = ""
 
 
 class ProspectUpdate(BaseModel):
@@ -163,10 +166,18 @@ class ProspectUpdate(BaseModel):
     next_step_date: Optional[str] = None
     tags: Optional[list[str]] = None
     owner_id: Optional[str] = None  # use empty-string to unset
+    source: Optional[str] = None
+    source_detail: Optional[str] = None
+    referred_by: Optional[str] = None
 
 
 class StatusUpdate(BaseModel):
     status: str
+
+
+class LostRequest(BaseModel):
+    lost_to_agency: str
+    lost_reason: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -255,15 +266,16 @@ def _strip_id(doc: dict) -> dict:
 # Dashboard / KPIs
 # ---------------------------------------------------------------------------
 @api.get("/dashboard/kpis")
-async def kpis():
+async def kpis(stale_days: int = 14):
+    from datetime import timedelta
     offices = await db.offices.count_documents({})
     brokers = await db.brokers.count_documents({})
     listings = await db.listings.count_documents({})
-    prospects_total = await db.prospects.count_documents({})
+    prospects_total = await db.prospects.count_documents({"is_lost": {"$ne": True}})
 
     pipeline = {}
     for s in PIPELINE_STATUSES:
-        pipeline[s] = await db.prospects.count_documents({"status": s})
+        pipeline[s] = await db.prospects.count_documents({"status": s, "is_lost": {"$ne": True}})
 
     # Regions covered
     region_cursor = db.offices.aggregate([{"$group": {"_id": "$region"}}])
@@ -272,6 +284,14 @@ async def kpis():
     goals = [_strip_id(g) async for g in db.goals.find({}, {"_id": 0})]
     activity = [_strip_id(a) async for a in
                 db.activity.find({}, {"_id": 0}).sort("created_at", -1).limit(15)]
+
+    lost_total = await db.prospects.count_documents({"is_lost": True})
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=stale_days)).isoformat()
+    stale_count = await db.prospects.count_documents({
+        "is_lost": {"$ne": True},
+        "status": {"$ne": "Onboardad"},
+        "updated_at": {"$lt": cutoff},
+    })
 
     return {
         "offices": offices,
@@ -282,7 +302,56 @@ async def kpis():
         "regions_covered": len([r for r in regions if r]),
         "goals": goals,
         "activity": activity,
+        "lost_total": lost_total,
+        "stale_count": stale_count,
+        "stale_days": stale_days,
         "as_of": _now(),
+    }
+
+
+@api.get("/dashboard/insights")
+async def insights(stale_days: int = Query(14, ge=1, le=180),
+                   user: dict = Depends(current_user)):
+    from datetime import timedelta
+
+    # Source breakdown (active prospects only)
+    sources = []
+    cursor = db.prospects.aggregate([
+        {"$match": {"is_lost": {"$ne": True}}},
+        {"$group": {"_id": "$source", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ])
+    async for doc in cursor:
+        sources.append({"source": doc["_id"] or "Annat", "count": doc["count"]})
+
+    # Lost breakdown (which competitors stole prospects)
+    lost_breakdown = []
+    cursor = db.prospects.aggregate([
+        {"$match": {"is_lost": True}},
+        {"$group": {"_id": "$lost_to_agency", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ])
+    async for doc in cursor:
+        lost_breakdown.append({"agency": doc["_id"] or "Okänd", "count": doc["count"]})
+
+    # Top stale prospects (top 5 oldest)
+    cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=stale_days)).isoformat()
+    stale_items = []
+    async for p in db.prospects.find(
+        {
+            "is_lost": {"$ne": True},
+            "status": {"$ne": "Onboardad"},
+            "updated_at": {"$lt": cutoff_iso},
+        },
+        {"_id": 0},
+    ).sort("updated_at", 1).limit(5):
+        stale_items.append(_strip_id(p))
+
+    return {
+        "sources": sources,
+        "lost_breakdown": lost_breakdown,
+        "top_stale": stale_items,
+        "stale_days": stale_days,
     }
 
 
@@ -365,13 +434,18 @@ async def list_listings(q: str = "", city: str = "", broker_id: str = "",
 # ---------------------------------------------------------------------------
 @api.get("/prospects")
 async def list_prospects(q: str = "", status: str = "", city: str = "",
-                         owner: str = "",
+                         owner: str = "", source: str = "",
+                         include_lost: bool = False,
                          user: dict = Depends(current_user)):
     flt: dict[str, Any] = {}
+    if not include_lost:
+        flt["is_lost"] = {"$ne": True}
     if status:
         flt["status"] = status
     if city:
         flt["city"] = city
+    if source:
+        flt["source"] = source
     if owner == "me":
         flt["owner_id"] = user["id"]
     elif owner == "unassigned":
@@ -472,6 +546,74 @@ async def delete_prospect(pid: str, user: dict = Depends(current_user)):
     await _activity("deleted", f"Prospekt borttaget: {existing['name']}",
                     actor=user, prospect_id=pid, prospect_name=existing["name"])
     return {"ok": True}
+
+
+@api.post("/prospects/{pid}/lost")
+async def mark_lost(pid: str, body: LostRequest, user: dict = Depends(current_user)):
+    existing = await db.prospects.find_one({"id": pid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Prospekt hittades inte")
+    if not body.lost_to_agency.strip():
+        raise HTTPException(400, "Kedja måste anges")
+    await db.prospects.update_one(
+        {"id": pid},
+        {"$set": {
+            "is_lost": True,
+            "lost_to_agency": body.lost_to_agency.strip(),
+            "lost_reason": body.lost_reason.strip(),
+            "lost_at": _now(),
+            "updated_at": _now(),
+        }},
+    )
+    await _activity(
+        "lost",
+        f"{existing['name']} förlorad till {body.lost_to_agency}",
+        actor=user, prospect_id=pid, prospect_name=existing["name"],
+    )
+    p = await db.prospects.find_one({"id": pid}, {"_id": 0})
+    return _strip_id(p)
+
+
+@api.post("/prospects/{pid}/restore")
+async def restore_prospect(pid: str, user: dict = Depends(current_user)):
+    existing = await db.prospects.find_one({"id": pid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Prospekt hittades inte")
+    await db.prospects.update_one(
+        {"id": pid},
+        {"$set": {
+            "is_lost": False,
+            "lost_to_agency": "",
+            "lost_reason": "",
+            "lost_at": None,
+            "updated_at": _now(),
+        }},
+    )
+    await _activity(
+        "restored",
+        f"{existing['name']} återställd till pipeline",
+        actor=user, prospect_id=pid, prospect_name=existing["name"],
+    )
+    p = await db.prospects.find_one({"id": pid}, {"_id": 0})
+    return _strip_id(p)
+
+
+@api.get("/stale-prospects")
+async def stale_prospects(days: int = Query(14, ge=1, le=180),
+                          user: dict = Depends(current_user)):
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    items = []
+    async for p in db.prospects.find(
+        {
+            "is_lost": {"$ne": True},
+            "status": {"$ne": "Onboardad"},
+            "updated_at": {"$lt": cutoff},
+        },
+        {"_id": 0},
+    ).sort("updated_at", 1):
+        items.append(_strip_id(p))
+    return {"items": items, "total": len(items), "cutoff": cutoff, "days": days}
 
 
 # ---------------------------------------------------------------------------

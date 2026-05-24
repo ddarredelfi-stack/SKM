@@ -13,6 +13,7 @@ import MapView from "@/pages/MapView";
 import Scrape from "@/pages/Scrape";
 import Settings from "@/pages/Settings";
 import Team from "@/pages/Team";
+import Lost from "@/pages/Lost";
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user } = useAuth();
@@ -61,6 +62,7 @@ function AppRoutes() {
                 <Route path="/scrape" element={<Scrape />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/team" element={<Team />} />
+                <Route path="/lost" element={<Lost />} />
               </Routes>
             </Layout>
           </ProtectedRoute>

@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { api, PIPELINE_STATUSES, STATUS_TONE, downloadCsv, formatDate } from "../lib/api";
+import { api, PIPELINE_STATUSES, STATUS_TONE, PROSPECT_SOURCES, daysSince, downloadCsv, formatDate } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import ProspectSheet from "../components/ProspectSheet";
 
@@ -35,6 +35,8 @@ const empty = {
   notes: "",
   next_step: "",
   next_step_date: "",
+  source: "Annat",
+  referred_by: "",
 };
 
 export default function Pipeline() {
@@ -213,6 +215,27 @@ export default function Pipeline() {
                   <Input data-testid="new-city" className="input-base mt-1" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
                 </div>
                 <div>
+                  <Label className="overline">Källa</Label>
+                  <Select value={form.source} onValueChange={(v) => setForm({ ...form, source: v })}>
+                    <SelectTrigger data-testid="new-source" className="input-base mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {PROSPECT_SOURCES.map((s) => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="overline">Referent / detalj</Label>
+                  <Input
+                    data-testid="new-referred-by"
+                    className="input-base mt-1"
+                    placeholder="t.ex. Pia Hansson"
+                    value={form.referred_by}
+                    onChange={(e) => setForm({ ...form, referred_by: e.target.value })}
+                  />
+                </div>
+                <div>
                   <Label className="overline">Telefon</Label>
                   <Input className="input-base mt-1" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
                 </div>
@@ -287,6 +310,24 @@ export default function Pipeline() {
                           color={p.owner_id ? "#CBA135" : "#A1A1AA"} />
                         <span className="truncate">{p.owner_name || "Otilldelad"}</span>
                       </div>
+                      {(() => {
+                        const d = daysSince(p.updated_at);
+                        if (d < 14 || p.status === "Onboardad") return null;
+                        const isCritical = d >= 30;
+                        return (
+                          <span
+                            data-testid={`stale-badge-${p.id}`}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-display font-bold uppercase tracking-wider whitespace-nowrap"
+                            style={{
+                              background: isCritical ? "#FEF2F2" : "#FEF3C7",
+                              color: isCritical ? "#7F1D1D" : "#7C2D12",
+                            }}
+                            title={`Inget hänt på ${d} dagar`}
+                          >
+                            <Clock size={9} weight="duotone" /> {d}d
+                          </span>
+                        );
+                      })()}
                     </div>
                     {p.tags?.length > 0 && (
                       <div className="mt-2 flex gap-1 flex-wrap">

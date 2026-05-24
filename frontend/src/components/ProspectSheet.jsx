@@ -6,6 +6,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "../components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 import { Textarea } from "../components/ui/textarea";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -23,11 +29,13 @@ import {
   FloppyDisk,
   Phone,
   LinkedinLogo,
+  XCircle,
+  ArrowCounterClockwise,
   MapPin,
   Calendar,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { api, PIPELINE_STATUSES } from "../lib/api";
+import { api, PIPELINE_STATUSES, PROSPECT_SOURCES, COMPETITOR_AGENCIES } from "../lib/api";
 import StatusPill from "./StatusPill";
 
 function renderMarkdown(md) {
@@ -68,6 +76,10 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
   const [briefLoading, setBriefLoading] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
   const [recipient, setRecipient] = useState("");
+  const [lostDialogOpen, setLostDialogOpen] = useState(false);
+  const [lostAgency, setLostAgency] = useState(COMPETITOR_AGENCIES[0]);
+  const [lostReason, setLostReason] = useState("");
+  const [lostBusy, setLostBusy] = useState(false);
 
   // Sync when prospect changes
   if (prospect && prospect.id !== form.id) {
@@ -310,6 +322,32 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
               </Select>
             </div>
             <div>
+              <Label className="overline">Källa</Label>
+              <Select
+                value={form.source || "Annat"}
+                onValueChange={(v) => update("source", v)}
+              >
+                <SelectTrigger data-testid="prospect-source-select" className="input-base mt-1.5">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PROSPECT_SOURCES.map((s) => (
+                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="overline">Referent / detalj</Label>
+              <Input
+                data-testid="prospect-referred-by-input"
+                className="input-base mt-1.5"
+                placeholder="t.ex. Pia Hansson eller Mäklarmässan -25"
+                value={form.referred_by || form.source_detail || ""}
+                onChange={(e) => update("referred_by", e.target.value)}
+              />
+            </div>
+            <div>
               <Label className="overline">Nästa steg</Label>
               <Input
                 data-testid="prospect-next-step-input"
@@ -369,14 +407,33 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
             </div>
           </section>
 
-          <div className="flex justify-between items-center pt-2">
-            <button
-              data-testid="delete-prospect-btn"
-              onClick={deleteProspect}
-              className="btn-ghost inline-flex items-center gap-1.5 text-[#DC2626] hover:text-[#DC2626]"
-            >
-              <Trash size={14} /> Ta bort
-            </button>
+          <div className="flex justify-between items-center pt-2 flex-wrap gap-2">
+            <div className="flex gap-2">
+              <button
+                data-testid="delete-prospect-btn"
+                onClick={deleteProspect}
+                className="btn-ghost inline-flex items-center gap-1.5 text-[#DC2626] hover:text-[#DC2626]"
+              >
+                <Trash size={14} /> Ta bort
+              </button>
+              {form.is_lost ? (
+                <button
+                  data-testid="restore-prospect-btn"
+                  onClick={restore}
+                  className="btn-ghost inline-flex items-center gap-1.5"
+                >
+                  <ArrowCounterClockwise size={14} /> Återställ
+                </button>
+              ) : (
+                <button
+                  data-testid="mark-lost-btn"
+                  onClick={() => setLostDialogOpen(true)}
+                  className="btn-ghost inline-flex items-center gap-1.5 text-[#DC2626] hover:text-[#DC2626]"
+                >
+                  <XCircle size={14} /> Markera som förlorad
+                </button>
+              )}
+            </div>
             <button
               data-testid="save-prospect-btn"
               onClick={save}
@@ -386,6 +443,26 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
               <FloppyDisk size={14} /> {saving ? "Sparar…" : "Spara ändringar"}
             </button>
           </div>
+
+          {form.is_lost && (
+            <div
+              data-testid="lost-banner"
+              className="card-surface p-4 border border-[#FECACA] bg-[#FEF2F2]"
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <XCircle size={16} weight="duotone" color="#DC2626" />
+                <div className="font-display font-extrabold text-[#7F1D1D] text-sm uppercase tracking-wider">
+                  Förlorad till {form.lost_to_agency || "—"}
+                </div>
+              </div>
+              {form.lost_reason && (
+                <p className="text-[13px] text-[#7F1D1D] font-body">{form.lost_reason}</p>
+              )}
+              <p className="text-[11px] text-[#A33] font-display font-semibold uppercase tracking-wider mt-2">
+                {form.lost_at ? new Date(form.lost_at).toLocaleString("sv-SE") : ""}
+              </p>
+            </div>
+          )}
 
           {/* Contact quick links */}
           {(form.phone || form.email || form.linkedin) && (
@@ -419,6 +496,55 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
           )}
         </div>
       </SheetContent>
+
+      <Dialog open={lostDialogOpen} onOpenChange={setLostDialogOpen}>
+        <DialogContent className="sm:max-w-[480px] bg-white" data-testid="lost-dialog">
+          <DialogHeader>
+            <div className="overline">Markera som förlorad</div>
+            <DialogTitle className="font-display font-extrabold tracking-tight text-2xl">
+              Vart gick {form.name}?
+            </DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-3 mt-2">
+            <div>
+              <Label className="overline">Konkurrent</Label>
+              <Select value={lostAgency} onValueChange={setLostAgency}>
+                <SelectTrigger data-testid="lost-agency-select" className="input-base mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {COMPETITOR_AGENCIES.map((a) => (
+                    <SelectItem key={a} value={a}>{a}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="overline">Anledning (kort)</Label>
+              <Textarea
+                data-testid="lost-reason-input"
+                placeholder="t.ex. bättre lön, närmare bostad, tackade ja till annat erbjudande"
+                className="input-base mt-1 font-body"
+                value={lostReason}
+                onChange={(e) => setLostReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={() => setLostDialogOpen(false)} className="btn-ghost">
+              Avbryt
+            </button>
+            <button
+              data-testid="confirm-mark-lost"
+              onClick={markLost}
+              disabled={lostBusy}
+              className="btn-primary inline-flex items-center gap-1.5"
+            >
+              <XCircle size={14} /> {lostBusy ? "Markerar…" : "Markera som förlorad"}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Sheet>
   );
 }

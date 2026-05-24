@@ -6,6 +6,7 @@ import Sidebar from "./Sidebar";
 const mobileLinks = [
   { to: "/", label: "Översikt", end: true },
   { to: "/pipeline", label: "Pipeline" },
+  { to: "/lost", label: "Förlorade" },
   { to: "/offices", label: "Kontor" },
   { to: "/brokers", label: "Mäklare" },
   { to: "/map", label: "Karta" },
