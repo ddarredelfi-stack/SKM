@@ -25,7 +25,7 @@ from starlette.middleware.cors import CORSMiddleware
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-from ai_service import generate_brief  # noqa: E402
+from ai_service import generate_brief, generate_discovery_strategy  # noqa: E402
 from auth import (  # noqa: E402
     clear_attempts,
     clear_auth_cookies,
@@ -713,6 +713,94 @@ async def whitespots(min_population: int = 25000, limit: int = 30):
         )
     items.sort(key=lambda m: m["opportunity_score"], reverse=True)
     return {"items": items[:limit], "total": len(items)}
+
+
+# ---------------------------------------------------------------------------
+# Lead discovery — curated links + AI strategy for white-spot cities
+# ---------------------------------------------------------------------------
+def _city_meta(city: str) -> dict:
+    for m in MUNICIPALITIES:
+        if m["name"].lower() == city.lower():
+            return m
+    return {"name": city, "region": "", "population": 0, "transactions": 0,
+            "lat": 0, "lng": 0}
+
+
+@api.get("/discovery/{city}")
+async def discovery_links(city: str, user: dict = Depends(current_user)):
+    """Curated lead-discovery links for a city (no scraping involved)."""
+    from urllib.parse import quote
+    safe = quote(city)
+    meta = _city_meta(city)
+    return {
+        "city": city,
+        "meta": meta,
+        "groups": [
+            {
+                "label": "Konkurrenters mäklare i orten",
+                "icon": "Buildings",
+                "items": [
+                    {"label": "Fastighetsbyrån", "url": f"https://www.fastighetsbyran.com/sv/sok/?ort={safe}"},
+                    {"label": "Svensk Fastighetsförmedling", "url": f"https://www.svenskfast.se/maklare/?ort={safe}"},
+                    {"label": "Länsförsäkringar Fastighetsförmedling", "url": f"https://www.lansfast.se/maklare/?ort={safe}"},
+                    {"label": "HusmanHagberg", "url": f"https://www.husmanhagberg.se/maklare/?ort={safe}"},
+                    {"label": "ERA Sverige", "url": f"https://www.era.se/sok/?ort={safe}"},
+                    {"label": "Bjurfors", "url": f"https://www.bjurfors.se/maklare?ort={safe}"},
+                    {"label": "Mäklarhuset", "url": f"https://www.maklarhuset.se/maklare?ort={safe}"},
+                    {"label": "Notar", "url": f"https://notar.se/maklare/?ort={safe}"},
+                ],
+            },
+            {
+                "label": "Branschregister & marknadsdata",
+                "icon": "Database",
+                "items": [
+                    {"label": "Mäklarsamfundets register", "url": f"https://www.maklarsamfundet.se/hitta-maklare?ort={safe}"},
+                    {"label": "Hemnet — mäklare i orten", "url": f"https://www.hemnet.se/maklare?location={safe}"},
+                    {"label": "Booli — sålt-statistik", "url": f"https://www.booli.se/slutpriser/{safe.lower()}"},
+                    {"label": "Allabolag — mäklarföretag", "url": f"https://www.allabolag.se/what/m%C3%A4klare+{safe}"},
+                ],
+            },
+            {
+                "label": "Sociala medier & sökmotorer",
+                "icon": "MagnifyingGlass",
+                "items": [
+                    {"label": "LinkedIn-mäklare (Google)", "url": f"https://www.google.com/search?q=site%3Alinkedin.com%2Fin+%22fastighetsm%C3%A4klare%22+%22{safe}%22"},
+                    {"label": "LinkedIn-kontorschefer (Google)", "url": f"https://www.google.com/search?q=site%3Alinkedin.com%2Fin+%22kontorschef%22+%22fastighetsm%C3%A4klare%22+%22{safe}%22"},
+                    {"label": "Google Maps — mäklarkontor", "url": f"https://www.google.com/maps/search/fastighetsm%C3%A4klare+{safe}"},
+                    {"label": "Google News — mäklare i orten", "url": f"https://www.google.com/search?q=fastighetsm%C3%A4klare+{safe}&tbm=nws"},
+                ],
+            },
+        ],
+    }
+
+
+@api.post("/discovery/{city}/ai-strategy")
+async def discovery_ai_strategy(city: str, user: dict = Depends(current_user)):
+    """Generate AI-powered sourcing strategy for a city."""
+    meta = _city_meta(city)
+    # Reuse competitor list logic from geo_municipalities
+    competitors = []
+    n_comp = min(5, max(1, meta.get("population", 0) // 30000)) if meta.get("population") else 3
+    pool = ["Fastighetsbyrån", "Svensk Fastighetsförmedling",
+            "Länsförsäkringar Fastighetsförmedling", "HusmanHagberg", "ERA", "Mäklarhuset"]
+    competitors = pool[:n_comp]
+    try:
+        strategy = await generate_discovery_strategy(
+            city=city,
+            region=meta.get("region", ""),
+            population=meta.get("population", 0),
+            transactions=meta.get("transactions", 0),
+            competitors=competitors,
+        )
+    except Exception as e:
+        logger.exception("Discovery AI failed")
+        raise HTTPException(500, f"AI-fel: {e}")
+    await _activity(
+        "ai_discovery",
+        f"AI-strategi genererad för {city}",
+        actor=user,
+    )
+    return {"city": city, "strategy": strategy, "competitors": competitors, "meta": meta}
 
 
 # ---------------------------------------------------------------------------

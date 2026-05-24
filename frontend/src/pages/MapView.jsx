@@ -7,6 +7,8 @@ import {
   TabsTrigger,
 } from "../components/ui/tabs";
 import SwedenMap from "../components/SwedenMap";
+import DiscoverySheet from "../components/DiscoverySheet";
+import { Sparkle } from "@phosphor-icons/react";
 import {
   Table,
   TableBody,
@@ -19,11 +21,18 @@ import {
 export default function MapView() {
   const [whitespots, setWhitespots] = useState([]);
   const [mode, setMode] = useState("all");
+  const [openCity, setOpenCity] = useState(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   useEffect(() => {
     api.get("/geo/whitespots", { params: { min_population: 25000, limit: 30 } })
       .then((r) => setWhitespots(r.data.items));
   }, []);
+
+  const openDiscovery = (city) => {
+    setOpenCity(city);
+    setSheetOpen(true);
+  };
 
   return (
     <div data-testid="map-page" className="flex flex-col gap-6">
@@ -58,7 +67,7 @@ export default function MapView() {
             </h2>
           </div>
           <div className="text-xs text-[#52525B] font-body">
-            Sorterat efter opportunity score
+            Klicka på rad → öppna lead discovery
           </div>
         </div>
         <div className="card-surface overflow-hidden">
@@ -71,26 +80,47 @@ export default function MapView() {
                 <TableHead className="overline text-right">Transaktioner/år</TableHead>
                 <TableHead className="overline">Konkurrenter</TableHead>
                 <TableHead className="overline text-right">Score</TableHead>
+                <TableHead className="overline w-32"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {whitespots.map((m) => (
-                <TableRow key={m.name} className="row-hover" data-testid={`whitespot-${m.name}`}>
+                <TableRow
+                  key={m.name}
+                  className="row-hover cursor-pointer"
+                  data-testid={`whitespot-${m.name}`}
+                  onClick={() => openDiscovery(m.name)}
+                >
                   <TableCell className="font-display font-bold text-[#0A0A0A]">{m.name}</TableCell>
                   <TableCell className="font-body text-sm text-[#52525B]">{m.region}</TableCell>
                   <TableCell className="text-right tabular-nums font-body text-sm">{formatNumber(m.population)}</TableCell>
                   <TableCell className="text-right tabular-nums font-body text-sm">~{formatNumber(m.transactions)}</TableCell>
                   <TableCell className="font-body text-[12px] text-[#52525B]">{m.competitors.join(", ")}</TableCell>
                   <TableCell className="text-right font-display font-extrabold text-[#CBA135] tabular-nums">{m.opportunity_score}</TableCell>
+                  <TableCell>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); openDiscovery(m.name); }}
+                      data-testid={`discover-btn-${m.name}`}
+                      className="btn-secondary inline-flex items-center gap-1 text-[12px] whitespace-nowrap"
+                    >
+                      <Sparkle size={12} weight="duotone" /> Discovery
+                    </button>
+                  </TableCell>
                 </TableRow>
               ))}
               {!whitespots.length && (
-                <TableRow><TableCell colSpan={6} className="text-center py-12 text-[#A1A1AA] text-sm">Laddar…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center py-12 text-[#A1A1AA] text-sm">Laddar…</TableCell></TableRow>
               )}
             </TableBody>
           </Table>
         </div>
       </section>
+
+      <DiscoverySheet
+        city={openCity}
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+      />
     </div>
   );
 }

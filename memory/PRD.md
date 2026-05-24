@@ -72,3 +72,17 @@ Inspiration: Notion möter HubSpot.
 - ✅ Nytt prospekt-dialog inkluderar källa + referent
 - ✅ Backend: GET /api/stale-prospects, POST /api/prospects/{id}/lost, POST /api/prospects/{id}/restore, GET /api/dashboard/insights
 - ✅ Test report: backend 14/14, frontend mark-lost flöde verifierat end-to-end
+
+## Phase 2.5 — Lead Discovery Wizard (2026-02 / iteration 5)
+- ✅ NY GET /api/discovery/{city} — returnerar curated länkar i 3 grupper:
+  - Konkurrenters mäklare: Fastighetsbyrån, SvFf, Länsförsäkringar, HusmanHagberg, ERA, Bjurfors, Mäklarhuset, Notar (8 kedjor)
+  - Branschregister: Mäklarsamfundet, Hemnet, Booli, Allabolag (4 källor)
+  - Sociala/sökmotorer: LinkedIn (Google site:), Google Maps, Google News (4 sökgenvägar)
+- ✅ NY POST /api/discovery/{city}/ai-strategy — Claude Sonnet genererar lokal lead-strategi för staden: marknadsbild, 4 kandidat-arketyper, 5 konkreta sökstrategier, pitch-vinklar, top-3-prioriteringar
+- ✅ DiscoverySheet komponent — slide-out drawer kopplad till klick på white spot-tabellrad
+- ✅ MapView: rader i white spots-tabellen är nu klickbara + "Discovery"-knapp
+- ✅ "Skapa prospekt"-CTA i discovery sheet → navigerar till /pipeline med prefill (city, region, source)
+- ✅ Pipeline lyssnar på location.state.prefill och auto-öppnar new-dialog
+- ✅ GDPR-disclaimer i discovery-sheet (berättigat intresse, spara minimum)
+- ✅ INGA ToS-brott — bara länkar till publika sökningar/register
+- ✅ Aktivitetslogg loggar "ai_discovery" när AI-strategi genereras

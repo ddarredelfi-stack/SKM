@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, MagnifyingGlass, DownloadSimple, UserCircle } from "@phosphor-icons/react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Plus, MagnifyingGlass, DownloadSimple, UserCircle, Clock } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -41,6 +42,8 @@ const empty = {
 
 export default function Pipeline() {
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [data, setData] = useState({ grouped: {}, items: [], statuses: PIPELINE_STATUSES });
   const [q, setQ] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("all");
@@ -51,6 +54,17 @@ export default function Pipeline() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [dragId, setDragId] = useState(null);
   const [dragOver, setDragOver] = useState(null);
+
+  // Open the new-prospect dialog pre-filled if navigated with state.prefill
+  useEffect(() => {
+    const prefill = location.state?.prefill;
+    if (prefill) {
+      setForm({ ...empty, ...prefill });
+      setOpenDialog(true);
+      // Clear the state so we don't re-open on every render
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.state, location.pathname, navigate]);
 
   const load = async () => {
     const params = { q };
