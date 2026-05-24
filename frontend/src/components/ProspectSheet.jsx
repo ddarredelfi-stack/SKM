@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "../components/ui/sheet";
@@ -170,6 +171,9 @@ export default function ProspectSheet({ prospect, open, onOpenChange, onUpdated,
           <SheetTitle className="font-display font-extrabold tracking-tight text-2xl text-[#0A0A0A]">
             {form.name}
           </SheetTitle>
+          <SheetDescription className="sr-only">
+            Redigera prospektet, generera AI-research, eller skicka en e-postpåminnelse.
+          </SheetDescription>
           <div className="flex items-center gap-2 pt-1 flex-wrap">
             <StatusPill status={form.status} size="lg" />
             {form.city && (
