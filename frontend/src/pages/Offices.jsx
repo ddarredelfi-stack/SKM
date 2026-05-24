@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MagnifyingGlass, DownloadSimple, MapPin, Phone, EnvelopeSimple } from "@phosphor-icons/react";
+import { MagnifyingGlass, DownloadSimple, MapPin, Phone, EnvelopeSimple, ArrowSquareOut } from "@phosphor-icons/react";
 import { api, downloadCsv } from "../lib/api";
 import { Input } from "../components/ui/input";
 import {
@@ -68,7 +68,21 @@ export default function Offices() {
             {items.map((o) => (
               <TableRow key={o.id} className="row-hover">
                 <TableCell className="py-4">
-                  <div className="font-display font-bold text-[14px] text-[#0A0A0A]">{o.name}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-display font-bold text-[14px] text-[#0A0A0A]">{o.name}</div>
+                    {o.website && (
+                      <a
+                        href={o.website}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Öppna på skandiamaklarna.se"
+                        data-testid={`office-link-${o.id}`}
+                        className="text-[#A1A1AA] hover:text-[#CBA135] transition-colors"
+                      >
+                        <ArrowSquareOut size={14} weight="bold" />
+                      </a>
+                    )}
+                  </div>
                   <div className="text-[12px] text-[#52525B] font-body flex items-center gap-1 mt-0.5">
                     <MapPin size={11} /> {o.address}
                   </div>

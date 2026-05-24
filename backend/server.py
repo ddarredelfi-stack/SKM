@@ -919,7 +919,7 @@ def _csv_response(rows: list[dict], fields: list[str], filename: str) -> Streami
 
 
 @api.get("/export/offices.csv")
-async def export_offices_csv():
+async def export_offices_csv(user: dict = Depends(current_user)):
     items = [_strip_id(o) async for o in db.offices.find({}, {"_id": 0}).sort("name", 1)]
     return _csv_response(
         items,
@@ -929,22 +929,25 @@ async def export_offices_csv():
 
 
 @api.get("/export/brokers.csv")
-async def export_brokers_csv():
+async def export_brokers_csv(user: dict = Depends(current_user)):
     items = [_strip_id(b) async for b in db.brokers.find({}, {"_id": 0}).sort("name", 1)]
     return _csv_response(
         items,
-        ["name", "title", "phone", "email", "office_name", "city", "active_listings", "ytd_sales"],
+        ["name", "title", "phone", "email", "office_name", "city", "active_listings",
+         "ytd_sales", "profile_url"],
         "skandia-maklare.csv",
     )
 
 
 @api.get("/export/prospects.csv")
-async def export_prospects_csv():
+async def export_prospects_csv(user: dict = Depends(current_user)):
     items = [_strip_id(p) async for p in db.prospects.find({}, {"_id": 0}).sort("status", 1)]
     return _csv_response(
         items,
         ["name", "type", "status", "current_agency", "city", "region", "phone", "email",
-         "linkedin", "next_step", "next_step_date", "notes"],
+         "linkedin", "source", "referred_by", "owner_name",
+         "next_step", "next_step_date", "notes",
+         "is_lost", "lost_to_agency", "lost_reason", "lost_at"],
         "skandia-prospekt.csv",
     )
 

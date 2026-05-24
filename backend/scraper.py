@@ -291,6 +291,24 @@ def _parse_office_page(url: str, html: str) -> Optional[dict]:
         if not re.match(r"^[A-ZÅÄÖa-zåäö\-' ]+$", broker_name):
             continue
 
+        # Profile URL: walk up to find an ancestor <a href="/personal/...">
+        profile_url = ""
+        anc = h3
+        for _ in range(4):
+            if anc is None:
+                break
+            if anc.name == "a" and anc.get("href", "").startswith("/personal/"):
+                profile_url = BASE_URL + anc["href"]
+                break
+            anc = anc.parent
+        if not profile_url:
+            # Sometimes the link is a sibling within the same card
+            card = h3.find_parent("div")
+            if card:
+                a = card.find("a", href=re.compile(r"^/personal/"))
+                if a:
+                    profile_url = BASE_URL + a["href"]
+
         cur = h3.parent
         tel_v = mail_v = role = ""
         for _ in range(5):
@@ -340,6 +358,7 @@ def _parse_office_page(url: str, html: str) -> Optional[dict]:
             "phone": tel_v,
             "email": mail_v,
             "avatar_url": avatar,
+            "profile_url": profile_url,
         })
 
     return {
@@ -552,6 +571,7 @@ def to_broker_docs(p: dict, office_doc: dict) -> list[dict]:
             "phone": b.get("phone") or "",
             "email": b.get("email") or "",
             "avatar_url": b.get("avatar_url") or "",
+            "profile_url": b.get("profile_url") or "",
             "office_id": office_doc["id"],
             "office_name": office_doc["name"],
             "city": office_doc["city"],

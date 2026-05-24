@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MagnifyingGlass, DownloadSimple, Phone, EnvelopeSimple } from "@phosphor-icons/react";
+import { MagnifyingGlass, DownloadSimple, Phone, EnvelopeSimple, ArrowSquareOut } from "@phosphor-icons/react";
 import { api, downloadCsv, formatNumber } from "../lib/api";
 import { Input } from "../components/ui/input";
 import {
@@ -78,7 +78,21 @@ export default function Brokers() {
                       onError={(e) => { e.target.style.display = "none"; }}
                     />
                     <div>
-                      <div className="font-display font-bold text-[13px] text-[#0A0A0A]">{b.name}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="font-display font-bold text-[13px] text-[#0A0A0A]">{b.name}</div>
+                        {b.profile_url && (
+                          <a
+                            href={b.profile_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Öppna profil på skandiamaklarna.se"
+                            data-testid={`broker-link-${b.id}`}
+                            className="text-[#A1A1AA] hover:text-[#CBA135] transition-colors"
+                          >
+                            <ArrowSquareOut size={12} weight="bold" />
+                          </a>
+                        )}
+                      </div>
                       <div className="text-[11px] text-[#A1A1AA] font-body">{b.email}</div>
                     </div>
                   </div>
