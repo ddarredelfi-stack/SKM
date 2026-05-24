@@ -1,0 +1,86 @@
+{
+  "theme": "Light",
+  "archetype": "Archetype 4: Swiss & High-Contrast",
+  "design_vision": "Notion meets HubSpot. A mature, B2B CRM dashboard for Skandiamäklarna. Zero fluff, strict data hierarchy, functional beauty. 95% monochrome with Skandiamäklarna Champagne/Gold used exclusively for key highlights, statuses, and primary actions to exude premium real estate authority.",
+  "color_palette": {
+    "background_page": "#FAFAFA",
+    "background_surface": "#FFFFFF",
+    "border_default": "#E5E5E5",
+    "border_focus": "#CBA135",
+    "text_primary": "#0A0A0A",
+    "text_secondary": "#52525B",
+    "brand_gold": "#CBA135",
+    "brand_gold_hover": "#A67C00",
+    "brand_black": "#0A0A0A",
+    "status_success": "#22C55E",
+    "status_warning": "#F59E0B",
+    "status_error": "#EF4444",
+    "status_identified": "#F4F4F5",
+    "status_contacted": "#FEF08A",
+    "status_meeting": "#FDE047",
+    "status_negotiation": "#CBA135",
+    "status_signed": "#22C55E"
+  },
+  "typography": {
+    "primary_font_import": "@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Manrope:wght@300;400;500;600;700;800&display=swap');",
+    "headings": {
+      "family": "'Manrope', sans-serif",
+      "weight": "800 (Black) or 300 (Light) for tension",
+      "h1": "text-4xl tracking-tighter",
+      "h2": "text-2xl tracking-tight",
+      "h3": "text-xl tracking-tight",
+      "overline": "text-xs tracking-[0.2em] uppercase font-bold text-gray-500"
+    },
+    "body": {
+      "family": "'IBM Plex Sans', sans-serif",
+      "base": "text-sm md:text-base leading-relaxed text-[#52525B]"
+    }
+  },
+  "spacing_and_layout": {
+    "container": "max-w-[1600px] mx-auto p-4 md:p-8",
+    "grid_system": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "card_padding": "p-6",
+    "border_radius": "rounded-md (max 8px to keep it sharp and professional)",
+    "surfaces": "Flat background, 1px solid #E5E5E5 border. On hover for interactive cards: -translate-y-1 shadow-lg transition-all duration-200"
+  },
+  "components": {
+    "sidebar_navigation": "Fixed left sidebar (Notion style), pure #FFFFFF background, 1px right border. Links are muted gray, active link has #0A0A0A text and subtle #CBA135 left border highlight.",
+    "kpi_cards": "col-span-1. Top-left metric value in Manrope text-4xl tracking-tighter. Sparkline or trend indicator on bottom right.",
+    "kanban_board": "Horizontal flex container with overflow-x-auto. Each column is w-80 or min-w-[320px], bg-[#F4F4F5] p-3 rounded-md. Cards inside are pure white with 1px border. Drag-and-drop implied visually.",
+    "interactive_map": "Leaflet map taking col-span-2 or col-span-full. Grayscale/Light map tiles (CartoDB Positron) to maintain monochrome UI. 'White spots' (municipalities without offices) highlighted with #CBA135 circles or polygons.",
+    "ai_research_panel": "Slide-out side panel (Sheet component from Shadcn). Displays generative AI brief on a selected broker/prospect. Use typewriter effect or staggered fade for the AI text load.",
+    "data_table": "Shadcn Table. Left-aligned text. Generous row padding (py-4). Hover state on rows: bg-gray-50.",
+    "buttons": "Primary: bg-[#0A0A0A] text-white hover:bg-[#CBA135] hover:text-white transition-colors. Secondary: bg-white border border-[#E5E5E5] text-[#0A0A0A] hover:border-[#0A0A0A]"
+  },
+  "icons_and_assets": {
+    "icon_library": "@phosphor-icons/react (Weight: 'regular' or 'duotone')",
+    "image_urls": [
+      {
+        "category": "broker_avatars",
+        "url": "https://images.unsplash.com/photo-1560250097-0b93528c311a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBidXNpbmVzcyUyMHBvcnRyYWl0JTIwaGVhZHNob3R8ZW58MHx8fHwxNzc5NjEwMTU1fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Male broker headshot"
+      },
+      {
+        "category": "broker_avatars",
+        "url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBidXNpbmVzcyUyMHBvcnRyYWl0JTIwaGVhZHNob3R8ZW58MHx8fHwxNzc5NjEwMTU1fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Female broker headshot"
+      },
+      {
+        "category": "broker_avatars",
+        "url": "https://images.unsplash.com/photo-1685760259914-ee8d2c92d2e0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODh8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBidXNpbmVzcyUyMHBvcnRyYWl0JTIwaGVhZHNob3R8ZW58MHx8fHwxNzc5NjEwMTU1fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Female broker standing"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Install and use @phosphor-icons/react for all icons. Do not use lucide-react unless absolutely necessary.",
+    "Install leaflet and react-leaflet for the geographic overview component. Ensure you add Leaflet's CSS. Use a light theme tile layer (e.g., CartoDB Positron: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').",
+    "Build a main layout with a persistent left Sidebar and a main Dashboard Area.",
+    "Implement the Pipeline as a Kanban board using a flex layout with horizontal scrolling. The columns should be: Identifierad, Kontaktad, Möte bokat, Förhandling, Signerad, Onboardad.",
+    "Ensure all interactive elements (buttons, table rows, kanban cards) have explicit hover states (e.g., hover:-translate-y-1 hover:shadow-lg).",
+    "Add 'data-testid' to all interactive elements for automated testing.",
+    "The AI Research Prompts feature should be built as a Shadcn Sheet (Slide-out panel) that triggers when clicking 'Generate Brief' on a prospect, presenting a clean, text-heavy AI summary.",
+    "Use Shadcn components for complex interactions like Modals, Sheets, and Tabs, but heavily customize them to remove the default 'Vercel look'—adhere strictly to the flat, 1px border, high-contrast monochrome + gold UI.",
+    "Ensure strict adherence to the typography rules in the CSS variables. Use Manrope for headings and IBM Plex Sans for body text. Do not default to Inter."
+  ]
+}
