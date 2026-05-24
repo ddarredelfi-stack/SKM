@@ -60,3 +60,15 @@ Inspiration: Notion möter HubSpot.
 - ✅ /login-sida + ProtectedRoute + redirect-flow + Layout med logout-knapp
 - ✅ Owner blir null automatiskt när användare tas bort (ej orphaned data)
 - ✅ Test report: 32/33 backend + 100% frontend (enda kvarvarande: CORS preflight K8s ingress override — kosmetiskt)
+
+## Phase 2 — Source, Lost-to, Stale alerts (2026-02 / iteration 4)
+- ✅ Källa + referent på prospekt (source, source_detail, referred_by). 8 fördefinierade källor (LinkedIn, Rekommendation, Event/Mässa, Webbformulär, Cold outreach, Hemnet/Booli, Scrape, Annat)
+- ✅ "Markera som förlorad"-flöde: dialog väljer konkurrent (12 kedjor) + skriver anledning. is_lost+lost_to_agency+lost_reason+lost_at sätts
+- ✅ Förlorade prospekt försvinner från aktiva pipeline (kanban + sökning) men finns på /lost-sidan
+- ✅ "Återställ"-flöde — för prospekt som ångrar sig
+- ✅ Stale-alerts: prospekt med updated_at > 14 dgr (config via stale_days) markeras med orange/röd badge i kanban + listas på dashboard
+- ✅ Ny KPI "Fastnat (>14 dgr)" på dashboard (ersätter "Aktiva objekt")
+- ✅ Insights-sektion på dashboard: Källfördelning + Förlorade till + Topp 5 stale
+- ✅ Nytt prospekt-dialog inkluderar källa + referent
+- ✅ Backend: GET /api/stale-prospects, POST /api/prospects/{id}/lost, POST /api/prospects/{id}/restore, GET /api/dashboard/insights
+- ✅ Test report: backend 14/14, frontend mark-lost flöde verifierat end-to-end

@@ -107,6 +107,9 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
         next_step: form.next_step,
         next_step_date: form.next_step_date,
         owner_id: form.owner_id || "",
+        source: form.source || "Annat",
+        source_detail: form.source_detail || "",
+        referred_by: form.referred_by || "",
       });
       toast.success("Prospekt uppdaterat");
       onUpdated?.(res.data);
@@ -115,6 +118,41 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
       toast.error("Kunde inte spara: " + (e.response?.data?.detail || e.message));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const markLost = async () => {
+    if (!lostAgency.trim()) {
+      toast.error("Välj kedja");
+      return;
+    }
+    setLostBusy(true);
+    try {
+      const res = await api.post(`/prospects/${prospect.id}/lost`, {
+        lost_to_agency: lostAgency,
+        lost_reason: lostReason,
+      });
+      toast.success(`Markerad som förlorad till ${lostAgency}`);
+      setForm(res.data);
+      onUpdated?.(res.data);
+      setLostDialogOpen(false);
+      setLostReason("");
+    } catch (e) {
+      toast.error("Kunde inte markera: " + (e.response?.data?.detail || e.message));
+    } finally {
+      setLostBusy(false);
+    }
+  };
+
+  const restore = async () => {
+    if (!confirm(`Återställ ${form.name} till pipeline?`)) return;
+    try {
+      const res = await api.post(`/prospects/${prospect.id}/restore`);
+      toast.success("Prospektet är tillbaka i pipelinen");
+      setForm(res.data);
+      onUpdated?.(res.data);
+    } catch (e) {
+      toast.error("Kunde inte återställa: " + (e.response?.data?.detail || e.message));
     }
   };
 
