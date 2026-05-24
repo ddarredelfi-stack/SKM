@@ -7,7 +7,7 @@ FastAPI + MongoDB, exposes:
 - /api/activity (activity log)
 - /api/goals (CRUD)
 - /api/geo/municipalities, /api/geo/whitespots
-- /api/scrape/run, /api/scrape/status
+- /api/scrape/run, /api/scrape/sync, /api/scrape/status
 - /api/ai/research-brief
 - /api/reminders/send (manual + due reminders)
 - /api/export/{type}.csv
@@ -17,6 +17,7 @@ import csv
 import io
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,7 +36,7 @@ load_dotenv(ROOT_DIR / ".env")
 from ai_service import generate_brief  # noqa: E402
 from email_service import build_reminder_html, send_reminder  # noqa: E402
 from municipalities_data import MUNICIPALITIES  # noqa: E402
-from scraper import scrape_offices  # noqa: E402
+from scraper import scrape_offices, to_broker_docs, to_office_doc  # noqa: E402
 from seed_data import (  # noqa: E402
     build_activity_seed,
     build_goals,
@@ -441,10 +442,15 @@ async def delete_goal(gid: str):
 @api.get("/geo/municipalities")
 async def geo_municipalities():
     cities_with_offices = set()
-    async for o in db.offices.find({}, {"_id": 0, "city": 1}):
-        c = o.get("city")
-        if c:
-            cities_with_offices.add(c)
+    async for o in db.offices.find({}, {"_id": 0, "city": 1, "name": 1}):
+        for v in (o.get("city"), o.get("name")):
+            if v:
+                cities_with_offices.add(v.strip().lower())
+                # Also add components split on "/" and "-" (e.g. "Nyköping/Oxelösund")
+                for part in re.split(r"[/\-]", v):
+                    p = part.strip().lower()
+                    if p:
+                        cities_with_offices.add(p)
 
     competitor_pool = [
         "Fastighetsbyrån", "Svensk Fastighetsförmedling",
@@ -454,7 +460,7 @@ async def geo_municipalities():
     _r.seed(1)
     out = []
     for m in MUNICIPALITIES:
-        has = m["name"] in cities_with_offices
+        has = m["name"].lower() in cities_with_offices
         # Deterministic competitor presence based on population
         n_comp = min(5, max(1, m["population"] // 30000))
         comps = competitor_pool[:n_comp]
@@ -491,8 +497,8 @@ async def scrape_status():
 
 
 @api.post("/scrape/run")
-async def scrape_run(limit: int = Query(5, ge=1, le=20)):
-    result = await scrape_offices(limit=limit)
+async def scrape_run(limit: int = Query(5, ge=1, le=200)):
+    result = await scrape_offices(limit=limit, db=db)
     # Persist run metadata (NOT the full office payloads to keep doc small)
     record = {
         "id": _id(),
@@ -501,8 +507,10 @@ async def scrape_run(limit: int = Query(5, ge=1, le=20)):
         "finished_at": result["finished_at"],
         "offices_found": result["offices_found"],
         "offices_parsed": result["offices_parsed"],
+        "brokers_parsed": result.get("brokers_parsed", 0),
         "errors": result["errors"],
         "limit": limit,
+        "mode": "preview",
     }
     await db.scrapes.insert_one(record)
 
@@ -519,6 +527,73 @@ async def scrape_run(limit: int = Query(5, ge=1, le=20)):
     await _activity("scrape", f"Scrape körd — {result['offices_parsed']}/{result['offices_found']} kontor hämtade")
 
     return {**result, "record_id": record["id"]}
+
+
+@api.post("/scrape/sync")
+async def scrape_sync():
+    """Run a full scrape and REPLACE the offices + brokers + scraped_offices collections.
+
+    Use this to bring the dashboard's primary data fully in sync with the live site.
+    Existing prospects, goals, activity log are untouched.
+    """
+    result = await scrape_offices(limit=None, db=db)
+    record = {
+        "id": _id(),
+        "status": result["status"],
+        "started_at": result["started_at"],
+        "finished_at": result["finished_at"],
+        "offices_found": result["offices_found"],
+        "offices_parsed": result["offices_parsed"],
+        "brokers_parsed": result.get("brokers_parsed", 0),
+        "errors": result["errors"],
+        "limit": None,
+        "mode": "sync",
+    }
+    await db.scrapes.insert_one(record)
+
+    if result["status"] != "ok" or not result["offices"]:
+        await _activity(
+            "scrape",
+            f"Full sync misslyckades — status={result['status']}, fel: {result['errors']}",
+        )
+        return {**result, "record_id": record["id"], "replaced": False}
+
+    # Build documents
+    office_docs = []
+    broker_docs = []
+    discovered_docs = []
+    for p in result["offices"]:
+        od = to_office_doc(p)
+        office_docs.append(od)
+        broker_docs.extend(to_broker_docs(p, od))
+        discovered_docs.append({**p, "scraped_at": _now()})
+
+    # Replace primary collections atomically (best-effort sequential)
+    await db.offices.delete_many({})
+    if office_docs:
+        await db.offices.insert_many(office_docs)
+    await db.brokers.delete_many({})
+    if broker_docs:
+        await db.brokers.insert_many(broker_docs)
+    # Remove old seed listings (since brokers are replaced, their listings are stale)
+    await db.listings.delete_many({})
+    # Refresh discovered side collection
+    await db.scraped_offices.delete_many({})
+    if discovered_docs:
+        await db.scraped_offices.insert_many(discovered_docs)
+
+    await _activity(
+        "scrape",
+        f"Full sync klar — {len(office_docs)} kontor, {len(broker_docs)} mäklare ersatte tidigare data",
+    )
+
+    return {
+        **result,
+        "record_id": record["id"],
+        "replaced": True,
+        "offices_written": len(office_docs),
+        "brokers_written": len(broker_docs),
+    }
 
 
 @api.get("/scrape/discovered")

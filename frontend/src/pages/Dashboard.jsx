@@ -9,14 +9,12 @@ import {
   Target,
   Compass,
 } from "@phosphor-icons/react";
-import { toast } from "sonner";
 import { api, formatNumber, PIPELINE_STATUSES, STATUS_TONE } from "../lib/api";
 import KpiCard from "../components/KpiCard";
 import ActivityFeed from "../components/ActivityFeed";
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
-  const [scraping, setScraping] = useState(false);
 
   const load = async () => {
     const res = await api.get("/dashboard/kpis");
@@ -26,27 +24,6 @@ export default function Dashboard() {
   useEffect(() => {
     load();
   }, []);
-
-  const triggerScrape = async () => {
-    setScraping(true);
-    try {
-      const res = await api.post("/scrape/run?limit=5");
-      if (res.data.status === "ok") {
-        toast.success(`Scrape klar: ${res.data.offices_parsed}/${res.data.offices_found} kontor`);
-      } else if (res.data.status === "blocked") {
-        toast.warning("Sajten blockerade förfrågan. Använd seedad data eller försök igen senare.");
-      } else if (res.data.status === "no_data") {
-        toast.warning("Inga kontor hittades — sajtstruktur kan ha ändrats.");
-      } else {
-        toast.error(res.data.errors?.[0] || "Scrape misslyckades");
-      }
-      load();
-    } catch (e) {
-      toast.error("Scrape-fel: " + e.message);
-    } finally {
-      setScraping(false);
-    }
-  };
 
   if (!data) {
     return <div className="text-sm text-[#52525B]" data-testid="dashboard-loading">Laddar dashboard…</div>;
@@ -77,15 +54,14 @@ export default function Dashboard() {
           >
             <ArrowsClockwise size={14} /> Uppdatera
           </button>
-          <button
-            data-testid="header-scrape-btn"
-            onClick={triggerScrape}
-            disabled={scraping}
+          <Link
+            to="/scrape"
+            data-testid="header-scrape-link"
             className="btn-primary inline-flex items-center gap-1.5"
           >
             <Compass size={14} weight="duotone" />
-            {scraping ? "Skrapar…" : "Kör scrape"}
-          </button>
+            Scraping
+          </Link>
         </div>
       </header>
 
@@ -107,7 +83,7 @@ export default function Dashboard() {
           testId="kpi-listings"
           label="Aktiva objekt"
           value={data.listings}
-          sub="Live från databasen"
+          sub={data.listings ? "Live från databasen" : "Ej synkat — finns ej i live-scrape än"}
         />
         <KpiCard
           testId="kpi-pipeline"

@@ -12,9 +12,10 @@ const STATUS_BADGE = {
 
 export default function Scrape() {
   const [running, setRunning] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [lastRun, setLastRun] = useState(null);
   const [discovered, setDiscovered] = useState([]);
-  const [limit, setLimit] = useState(5);
+  const [limit, setLimit] = useState(10);
 
   const loadStatus = async () => {
     const [s, d] = await Promise.all([
@@ -32,7 +33,7 @@ export default function Scrape() {
     try {
       const res = await api.post(`/scrape/run?limit=${limit}`);
       if (res.data.status === "ok") {
-        toast.success(`Skrapade ${res.data.offices_parsed}/${res.data.offices_found} kontor`);
+        toast.success(`Skrapade ${res.data.offices_parsed}/${res.data.offices_found} kontor (${res.data.brokers_parsed || 0} mäklare)`);
       } else if (res.data.status === "blocked") {
         toast.warning("Sajten svarade inte (möjlig bot-blockering).");
       } else if (res.data.status === "no_data") {
@@ -48,6 +49,24 @@ export default function Scrape() {
     }
   };
 
+  const runSync = async () => {
+    if (!confirm("Full sync ersätter ALLA kontor och mäklare i databasen med färsk data från skandiamaklarna.se. Befintliga prospekt/mål bevaras. Fortsätt?")) return;
+    setSyncing(true);
+    try {
+      const res = await api.post(`/scrape/sync`, null, { timeout: 240000 });
+      if (res.data.status === "ok" && res.data.replaced) {
+        toast.success(`Full sync klar — ${res.data.offices_written} kontor + ${res.data.brokers_written} mäklare ersatte tidigare data`);
+      } else {
+        toast.error(res.data.errors?.[0] || `Sync misslyckades (${res.data.status})`);
+      }
+      loadStatus();
+    } catch (e) {
+      toast.error("Sync-fel: " + e.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const badge = lastRun ? STATUS_BADGE[lastRun.status] || STATUS_BADGE.error : null;
 
   return (
@@ -59,11 +78,12 @@ export default function Scrape() {
             Live-scraping
           </h1>
           <p className="text-[#52525B] text-sm mt-2 font-body max-w-2xl">
-            Hämtar kontor och mäklare direkt från skandiamaklarna.se. Använd sparsamt –
-            sajten kan blockera bots.
+            Hämtar kontor och mäklare direkt från skandiamaklarna.se via JSON-LD.
+            Använd <strong>Förhandsgranska</strong> för att testa, eller <strong>Full sync</strong>
+            för att ersätta hela kontors- och mäklardatabasen med färsk data.
           </p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-2 items-center flex-wrap">
           <select
             data-testid="scrape-limit"
             className="input-base"
@@ -78,11 +98,21 @@ export default function Scrape() {
           <button
             data-testid="run-scrape-btn"
             onClick={runScrape}
-            disabled={running}
-            className="btn-primary inline-flex items-center gap-1.5"
+            disabled={running || syncing}
+            className="btn-secondary inline-flex items-center gap-1.5"
           >
             <ArrowsClockwise size={14} className={running ? "animate-spin" : ""} />
-            {running ? "Skrapar…" : "Kör scrape nu"}
+            {running ? "Skrapar…" : "Förhandsgranska"}
+          </button>
+          <button
+            data-testid="run-sync-btn"
+            onClick={runSync}
+            disabled={syncing || running}
+            className="btn-primary inline-flex items-center gap-1.5"
+            title="Ersätter all kontors- och mäklardata"
+          >
+            <ArrowsClockwise size={14} className={syncing ? "animate-spin" : ""} />
+            {syncing ? "Synkar alla kontor…" : "Full sync (alla 90 kontor)"}
           </button>
         </div>
       </header>
