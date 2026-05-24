@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -31,6 +31,12 @@ import {
   LinkedinLogo,
   XCircle,
   ArrowCounterClockwise,
+  CurrencyCircleDollar,
+  PaperclipHorizontal,
+  CheckCircle,
+  Circle,
+  CloudArrowUp,
+  Plus,
   MapPin,
   Calendar,
 } from "@phosphor-icons/react";
@@ -81,6 +87,25 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
   const [lostReason, setLostReason] = useState("");
   const [lostBusy, setLostBusy] = useState(false);
 
+  // Phase 3 — Files
+  const [files, setFiles] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Phase 3 — Onboarding
+  const [onboarding, setOnboarding] = useState([]);
+  const [onboardingBusy, setOnboardingBusy] = useState(false);
+
+  useEffect(() => {
+    if (!prospect?.id) return;
+    api.get(`/prospects/${prospect.id}/files`)
+      .then((res) => setFiles(res.data.items || []))
+      .catch(() => setFiles([]));
+    api.get(`/prospects/${prospect.id}/onboarding`)
+      .then((res) => setOnboarding(res.data.items || []))
+      .catch(() => setOnboarding([]));
+  }, [prospect?.id]);
+
   // Sync when prospect changes
   if (prospect && prospect.id !== form.id) {
     setForm(prospect);
@@ -110,6 +135,14 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
         source: form.source || "Annat",
         source_detail: form.source_detail || "",
         referred_by: form.referred_by || "",
+        signing_bonus: form.signing_bonus === "" ? null : Number(form.signing_bonus) || null,
+        commission_split: form.commission_split || "",
+        guaranteed_salary: form.guaranteed_salary === "" ? null : Number(form.guaranteed_salary) || null,
+        establishment_grant: form.establishment_grant === "" ? null : Number(form.establishment_grant) || null,
+        start_date: form.start_date || null,
+        contract_term_months: form.contract_term_months === "" ? null : Number(form.contract_term_months) || null,
+        expected_first_year_revenue: form.expected_first_year_revenue === "" ? null : Number(form.expected_first_year_revenue) || null,
+        economy_notes: form.economy_notes || "",
       });
       toast.success("Prospekt uppdaterat");
       onUpdated?.(res.data);
@@ -118,6 +151,75 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
       toast.error("Kunde inte spara: " + (e.response?.data?.detail || e.message));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const uploadFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      const res = await api.post(`/prospects/${prospect.id}/files`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setFiles((cur) => [res.data, ...cur]);
+      toast.success(`${f.name} uppladdad`);
+    } catch (err) {
+      toast.error("Uppladdning misslyckades: " + (err.response?.data?.detail || err.message));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const downloadFile = async (file) => {
+    try {
+      const res = await api.get(`/files/${file.id}/download`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([res.data], { type: file.content_type }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = file.original_filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      toast.error("Nedladdning misslyckades: " + e.message);
+    }
+  };
+
+  const deleteFile = async (file) => {
+    if (!confirm(`Ta bort ${file.original_filename}?`)) return;
+    try {
+      await api.delete(`/files/${file.id}`);
+      setFiles((cur) => cur.filter((x) => x.id !== file.id));
+      toast.success("Fil borttagen");
+    } catch (e) {
+      toast.error("Kunde inte ta bort: " + e.message);
+    }
+  };
+
+  const initOnboarding = async () => {
+    setOnboardingBusy(true);
+    try {
+      const res = await api.post(`/prospects/${prospect.id}/onboarding/init`);
+      setOnboarding(res.data.items || []);
+      toast.success("Onboarding-checklista skapad");
+    } catch (e) {
+      toast.error("Fel: " + e.message);
+    } finally {
+      setOnboardingBusy(false);
+    }
+  };
+
+  const toggleOnboarding = async (item) => {
+    try {
+      const res = await api.patch(`/onboarding/${item.id}`, { completed: !item.completed });
+      setOnboarding((cur) => cur.map((x) => (x.id === item.id ? res.data : x)));
+    } catch (e) {
+      toast.error("Fel: " + e.message);
     }
   };
 
@@ -443,6 +545,223 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
                 <EnvelopeSimple size={14} /> {emailLoading ? "Skickar…" : "Skicka"}
               </button>
             </div>
+          </section>
+
+          {/* Anbudsekonomi */}
+          <section className="card-surface p-5" data-testid="economy-section">
+            <div className="flex items-center gap-2 mb-3">
+              <CurrencyCircleDollar size={16} color="#CBA135" weight="duotone" />
+              <div className="font-display font-bold text-sm">Anbudsekonomi</div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="overline">Signing bonus (SEK)</Label>
+                <Input
+                  data-testid="signing-bonus-input"
+                  type="number"
+                  className="input-base mt-1.5 tabular-nums"
+                  value={form.signing_bonus ?? ""}
+                  onChange={(e) => update("signing_bonus", e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="overline">Provisionsmodell</Label>
+                <Input
+                  data-testid="commission-split-input"
+                  className="input-base mt-1.5"
+                  placeholder="t.ex. 70/30 eller 50/50 + bonus"
+                  value={form.commission_split || ""}
+                  onChange={(e) => update("commission_split", e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="overline">Garantilön / månad (SEK)</Label>
+                <Input
+                  data-testid="guaranteed-salary-input"
+                  type="number"
+                  className="input-base mt-1.5 tabular-nums"
+                  value={form.guaranteed_salary ?? ""}
+                  onChange={(e) => update("guaranteed_salary", e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="overline">Etablerings-stöd (SEK)</Label>
+                <Input
+                  type="number"
+                  className="input-base mt-1.5 tabular-nums"
+                  value={form.establishment_grant ?? ""}
+                  onChange={(e) => update("establishment_grant", e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="overline">Tillträde</Label>
+                <Input
+                  type="date"
+                  className="input-base mt-1.5"
+                  value={(form.start_date || "").slice(0, 10)}
+                  onChange={(e) => update("start_date", e.target.value)}
+                />
+              </div>
+              <div>
+                <Label className="overline">Bindningstid (mån)</Label>
+                <Input
+                  type="number"
+                  className="input-base mt-1.5 tabular-nums"
+                  value={form.contract_term_months ?? ""}
+                  onChange={(e) => update("contract_term_months", e.target.value)}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <Label className="overline">Förväntad intäkt år 1 (SEK)</Label>
+                <Input
+                  data-testid="expected-revenue-input"
+                  type="number"
+                  className="input-base mt-1.5 tabular-nums"
+                  placeholder="0"
+                  value={form.expected_first_year_revenue ?? ""}
+                  onChange={(e) => update("expected_first_year_revenue", e.target.value)}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <Label className="overline">Ekonomi-anteckningar</Label>
+                <Textarea
+                  className="input-base mt-1.5 font-body"
+                  rows={2}
+                  value={form.economy_notes || ""}
+                  onChange={(e) => update("economy_notes", e.target.value)}
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* Dokument */}
+          <section className="card-surface p-5" data-testid="files-section">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <PaperclipHorizontal size={16} color="#CBA135" weight="duotone" />
+                <div className="font-display font-bold text-sm">Dokument</div>
+              </div>
+              <label className="btn-secondary inline-flex items-center gap-1.5 cursor-pointer">
+                <CloudArrowUp size={14} />
+                {uploading ? "Laddar upp…" : "Ladda upp"}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.txt,.csv"
+                  className="hidden"
+                  onChange={uploadFile}
+                  disabled={uploading}
+                  data-testid="file-upload-input"
+                />
+              </label>
+            </div>
+            {files.length === 0 ? (
+              <div className="text-sm text-[#A1A1AA] py-6 text-center border border-dashed border-[#E5E5E5] rounded-md font-body">
+                Inga dokument än. LOI, avtal, NDA — PDF/DOCX/JPG max 15 MB.
+              </div>
+            ) : (
+              <ul className="flex flex-col divide-y divide-[#E5E5E5]">
+                {files.map((f) => (
+                  <li
+                    key={f.id}
+                    data-testid={`file-row-${f.id}`}
+                    className="py-2.5 flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0 flex items-center gap-2">
+                      <PaperclipHorizontal size={14} color="#52525B" />
+                      <div className="min-w-0">
+                        <div className="font-body text-[13px] text-[#0A0A0A] truncate">
+                          {f.original_filename}
+                        </div>
+                        <div className="text-[11px] text-[#A1A1AA] font-display font-semibold uppercase tracking-wider">
+                          {(f.size / 1024).toFixed(1)} KB · {f.uploaded_by_name}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button
+                        onClick={() => downloadFile(f)}
+                        data-testid={`download-${f.id}`}
+                        className="btn-ghost text-xs"
+                      >
+                        Ladda ner
+                      </button>
+                      <button
+                        onClick={() => deleteFile(f)}
+                        data-testid={`delete-file-${f.id}`}
+                        className="btn-ghost p-1.5 text-[#DC2626]"
+                      >
+                        <Trash size={12} />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* Onboarding */}
+          <section className="card-surface p-5" data-testid="onboarding-section">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle size={16} color="#CBA135" weight="duotone" />
+                <div className="font-display font-bold text-sm">
+                  Onboarding ({onboarding.filter((i) => i.completed).length}/{onboarding.length})
+                </div>
+              </div>
+              {onboarding.length === 0 && (
+                <button
+                  data-testid="init-onboarding-btn"
+                  onClick={initOnboarding}
+                  disabled={onboardingBusy}
+                  className="btn-primary inline-flex items-center gap-1.5"
+                >
+                  <Plus size={14} /> {onboardingBusy ? "Skapar…" : "Starta 30/60/90"}
+                </button>
+              )}
+            </div>
+            {onboarding.length === 0 ? (
+              <p className="text-[12px] text-[#52525B] font-body">
+                Skapa en 11-stegs checklista med standard onboarding-aktiviteter
+                (välkomstmejl, IT-access, mentor, 30/60/90-dagars check-ins).
+              </p>
+            ) : (
+              <ul className="flex flex-col divide-y divide-[#E5E5E5]">
+                {onboarding.map((it) => (
+                  <li
+                    key={it.id}
+                    data-testid={`onboarding-${it.id}`}
+                    className="py-2 flex items-start justify-between gap-3"
+                  >
+                    <button
+                      onClick={() => toggleOnboarding(it)}
+                      className="flex items-start gap-2 text-left flex-1 min-w-0"
+                    >
+                      {it.completed ? (
+                        <CheckCircle size={16} color="#22C55E" weight="fill" className="mt-0.5 shrink-0" />
+                      ) : (
+                        <Circle size={16} color="#D4D4D8" className="mt-0.5 shrink-0" />
+                      )}
+                      <div className="min-w-0">
+                        <div
+                          className={`text-[13px] font-body ${
+                            it.completed ? "text-[#A1A1AA] line-through" : "text-[#0A0A0A]"
+                          }`}
+                        >
+                          {it.title}
+                        </div>
+                        <div className="text-[11px] text-[#A1A1AA] font-display font-semibold uppercase tracking-wider mt-0.5">
+                          Dag {it.due_offset_days}
+                          {it.completed && it.completed_by_name && (
+                            <> · klart av {it.completed_by_name}</>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
           <div className="flex justify-between items-center pt-2 flex-wrap gap-2">

@@ -82,17 +82,24 @@ export default function Dashboard() {
           sub={`${data.regions_covered} regioner med närvaro`}
         />
         <KpiCard
-          testId="kpi-brokers"
-          label="Aktiva mäklare"
-          value={data.brokers}
-          sub={`${(data.brokers / Math.max(data.offices, 1)).toFixed(1)} mäklare/kontor i snitt`}
-        />
-        <KpiCard
           testId="kpi-pipeline"
           label="Värvningsprospekt"
           value={data.prospects_total}
           sub={`${totalInPipeline} aktiva i pipeline`}
           accent
+        />
+        <KpiCard
+          testId="kpi-pipeline-value"
+          label="Pipeline-värde (SEK)"
+          value={
+            data.pipeline_value
+              ? new Intl.NumberFormat("sv-SE", {
+                  notation: "compact",
+                  maximumFractionDigits: 1,
+                }).format(data.pipeline_value)
+              : "0"
+          }
+          sub="Förv. intäkt år 1 + signing bonus"
         />
         <KpiCard
           testId="kpi-stale"

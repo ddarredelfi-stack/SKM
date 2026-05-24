@@ -86,3 +86,21 @@ Inspiration: Notion möter HubSpot.
 - ✅ GDPR-disclaimer i discovery-sheet (berättigat intresse, spara minimum)
 - ✅ INGA ToS-brott — bara länkar till publika sökningar/register
 - ✅ Aktivitetslogg loggar "ai_discovery" när AI-strategi genereras
+
+## Phase 3 — Deal economics, Document storage, Onboarding (2026-02 / iteration 6)
+- ✅ Anbudsekonomi på prospekt: signing_bonus, commission_split, guaranteed_salary, establishment_grant, start_date, contract_term_months, expected_first_year_revenue, economy_notes
+- ✅ NY KPI "Pipeline-värde" på dashboard = sum(expected_first_year_revenue + signing_bonus) för aktiva prospekt, visas i kompakt format (1.4M, 350K)
+- ✅ Dokumentlagring via Emergent Object Storage:
+  - POST /api/prospects/{id}/files (multipart upload, max 15MB, allowed exts: pdf/doc/docx/xls/xlsx/png/jpg/jpeg/gif/webp/txt/csv/json)
+  - GET /api/prospects/{id}/files (lista)
+  - GET /api/files/{id}/download (binärt svar med Content-Disposition)
+  - DELETE /api/files/{id} (soft delete)
+  - Storage path: skandia-etablering/prospects/{prospect_id}/{user_id}/{uuid}.{ext}
+  - Activity log per fil-upload + delete med uploaded_by/deleted_by
+- ✅ Onboarding-checklista:
+  - 11-stegs default template (välkomstmejl, IT-access, mentor, brand-paket, GDPR-utb., 30/60/90 check-ins, PR-launch, första objekt)
+  - "Starta 30/60/90"-knapp initierar idempotent (säker att klicka flera ggr)
+  - Toggle per steg → loggar completed_by + completed_at
+  - Räknare "Onboarding (X/11)" i sektionens header
+- ✅ ProspectSheet utökad med 3 nya sektioner (Ekonomi, Dokument, Onboarding) — flat scroll, samma design-språk
+- ✅ Object storage initieras vid backend startup, ENV: EMERGENT_LLM_KEY (delas med LLM)

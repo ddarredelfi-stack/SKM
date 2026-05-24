@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
@@ -48,6 +48,13 @@ from seed_data import (  # noqa: E402
     build_goals,
     build_prospects,
     build_seed,
+)
+from storage_service import (  # noqa: E402
+    build_path,
+    get_object,
+    guess_content_type,
+    init_storage,
+    put_object,
 )
 
 # ---------------------------------------------------------------------------
@@ -124,8 +131,15 @@ async def on_startup():
     try:
         await db.users.create_index("email", unique=True)
         await db.login_attempts.create_index("id")
+        await db.files.create_index("prospect_id")
+        await db.onboarding.create_index("prospect_id")
     except Exception as e:
         logger.warning(f"Index create skipped: {e}")
+    try:
+        await init_storage()
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.warning(f"Storage init skipped: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +163,15 @@ class ProspectIn(BaseModel):
     source: str = "Annat"
     source_detail: str = ""
     referred_by: str = ""
+    # Anbudsekonomi (deal economics)
+    signing_bonus: Optional[int] = None
+    commission_split: str = ""
+    guaranteed_salary: Optional[int] = None
+    establishment_grant: Optional[int] = None
+    start_date: Optional[str] = None
+    contract_term_months: Optional[int] = None
+    expected_first_year_revenue: Optional[int] = None
+    economy_notes: str = ""
 
 
 class ProspectUpdate(BaseModel):
@@ -169,6 +192,14 @@ class ProspectUpdate(BaseModel):
     source: Optional[str] = None
     source_detail: Optional[str] = None
     referred_by: Optional[str] = None
+    signing_bonus: Optional[int] = None
+    commission_split: Optional[str] = None
+    guaranteed_salary: Optional[int] = None
+    establishment_grant: Optional[int] = None
+    start_date: Optional[str] = None
+    contract_term_months: Optional[int] = None
+    expected_first_year_revenue: Optional[int] = None
+    economy_notes: Optional[str] = None
 
 
 class StatusUpdate(BaseModel):
@@ -178,6 +209,19 @@ class StatusUpdate(BaseModel):
 class LostRequest(BaseModel):
     lost_to_agency: str
     lost_reason: str = ""
+
+
+class OnboardingItemUpdate(BaseModel):
+    title: Optional[str] = None
+    completed: Optional[bool] = None
+    notes: Optional[str] = None
+    due_offset_days: Optional[int] = None
+
+
+class OnboardingItemCreate(BaseModel):
+    title: str
+    due_offset_days: int = 0
+    notes: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -293,6 +337,16 @@ async def kpis(stale_days: int = 14):
         "updated_at": {"$lt": cutoff},
     })
 
+    # Pipeline economic value = sum of expected_first_year_revenue + signing_bonus
+    # across active (non-lost) prospects.
+    pipeline_value = 0
+    async for p in db.prospects.find(
+        {"is_lost": {"$ne": True}, "status": {"$ne": "Onboardad"}},
+        {"_id": 0, "expected_first_year_revenue": 1, "signing_bonus": 1},
+    ):
+        pipeline_value += int(p.get("expected_first_year_revenue") or 0)
+        pipeline_value += int(p.get("signing_bonus") or 0)
+
     return {
         "offices": offices,
         "brokers": brokers,
@@ -305,6 +359,7 @@ async def kpis(stale_days: int = 14):
         "lost_total": lost_total,
         "stale_count": stale_count,
         "stale_days": stale_days,
+        "pipeline_value": pipeline_value,
         "as_of": _now(),
     }
 
@@ -614,6 +669,236 @@ async def stale_prospects(days: int = Query(14, ge=1, le=180),
     ).sort("updated_at", 1):
         items.append(_strip_id(p))
     return {"items": items, "total": len(items), "cutoff": cutoff, "days": days}
+
+
+# ---------------------------------------------------------------------------
+# Prospect files (object storage)
+# ---------------------------------------------------------------------------
+ALLOWED_FILE_EXT = {"pdf", "doc", "docx", "xls", "xlsx", "png", "jpg", "jpeg",
+                    "gif", "webp", "txt", "csv", "json"}
+MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
+
+
+@api.post("/prospects/{pid}/files")
+async def upload_prospect_file(pid: str,
+                               file: UploadFile = File(...),
+                               user: dict = Depends(current_user)):
+    prospect = await db.prospects.find_one({"id": pid}, {"_id": 0})
+    if not prospect:
+        raise HTTPException(404, "Prospekt hittades inte")
+    filename = file.filename or "file"
+    ext = (filename.rsplit(".", 1)[-1] if "." in filename else "").lower()
+    if ext not in ALLOWED_FILE_EXT:
+        raise HTTPException(400, f"Filtypen .{ext} stöds inte")
+    data = await file.read()
+    if len(data) > MAX_FILE_SIZE:
+        raise HTTPException(413, "Filen är för stor (max 15 MB)")
+    if not data:
+        raise HTTPException(400, "Tom fil")
+    path = build_path(user["id"], pid, filename)
+    content_type = file.content_type or guess_content_type(filename)
+    try:
+        result = await put_object(path, data, content_type)
+    except Exception as e:
+        logger.exception("Object storage upload failed")
+        raise HTTPException(500, f"Uppladdning misslyckades: {e}")
+
+    record = {
+        "id": _id(),
+        "prospect_id": pid,
+        "storage_path": result.get("path", path),
+        "original_filename": filename,
+        "content_type": content_type,
+        "size": result.get("size", len(data)),
+        "uploaded_by_id": user["id"],
+        "uploaded_by_name": user["name"],
+        "uploaded_at": _now(),
+        "is_deleted": False,
+    }
+    await db.files.insert_one(record)
+    await _activity("file_uploaded", f"Fil uppladdad till {prospect['name']}: {filename}",
+                    actor=user, prospect_id=pid, prospect_name=prospect["name"])
+    return _strip_id(record)
+
+
+@api.get("/prospects/{pid}/files")
+async def list_prospect_files(pid: str, user: dict = Depends(current_user)):
+    items = []
+    async for f in db.files.find(
+        {"prospect_id": pid, "is_deleted": False},
+        {"_id": 0},
+    ).sort("uploaded_at", -1):
+        items.append(_strip_id(f))
+    return {"items": items, "total": len(items)}
+
+
+@api.get("/files/{file_id}/download")
+async def download_file(file_id: str, user: dict = Depends(current_user)):
+    record = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
+    if not record:
+        raise HTTPException(404, "Fil hittades inte")
+    try:
+        data, ct = await get_object(record["storage_path"])
+    except Exception as e:
+        logger.exception("Object storage download failed")
+        raise HTTPException(500, f"Nedladdning misslyckades: {e}")
+    safe_name = record["original_filename"].replace('"', '_')
+    return Response(
+        content=data,
+        media_type=record.get("content_type", ct),
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
+
+
+@api.delete("/files/{file_id}")
+async def delete_file(file_id: str, user: dict = Depends(current_user)):
+    record = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
+    if not record:
+        raise HTTPException(404, "Fil hittades inte")
+    await db.files.update_one(
+        {"id": file_id},
+        {"$set": {"is_deleted": True, "deleted_at": _now(), "deleted_by_id": user["id"]}},
+    )
+    await _activity(
+        "file_deleted",
+        f"Fil borttagen: {record['original_filename']}",
+        actor=user, prospect_id=record["prospect_id"],
+    )
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Onboarding checklist
+# ---------------------------------------------------------------------------
+DEFAULT_ONBOARDING_TEMPLATE = [
+    {"title": "Skicka välkomstmejl med kontrakt-bekräftelse", "due_offset_days": 0},
+    {"title": "Beställ IT-access (CRM, Hemnet, mejl, telefoni)", "due_offset_days": 3},
+    {"title": "Boka introduktion med kontorschef och team", "due_offset_days": 5},
+    {"title": "Beställ visitkort, skylt och brand-paket", "due_offset_days": 7},
+    {"title": "Tilldela mentor", "due_offset_days": 7},
+    {"title": "GDPR- och compliance-utbildning genomförd", "due_offset_days": 14},
+    {"title": "30-dagars check-in", "due_offset_days": 30},
+    {"title": "60-dagars check-in", "due_offset_days": 60},
+    {"title": "90-dagars check-in + utvärdering", "due_offset_days": 90},
+    {"title": "PR-launch / lokal marknadsföring", "due_offset_days": 14},
+    {"title": "Första objektsintag", "due_offset_days": 30},
+]
+
+
+@api.get("/prospects/{pid}/onboarding")
+async def list_onboarding(pid: str, user: dict = Depends(current_user)):
+    items = []
+    async for it in db.onboarding.find(
+        {"prospect_id": pid},
+        {"_id": 0},
+    ).sort("due_offset_days", 1):
+        items.append(_strip_id(it))
+    return {"items": items, "total": len(items)}
+
+
+@api.post("/prospects/{pid}/onboarding/init")
+async def init_onboarding(pid: str, user: dict = Depends(current_user)):
+    """Create the default onboarding checklist for a prospect.
+    Idempotent: returns existing items if already initialized."""
+    prospect = await db.prospects.find_one({"id": pid}, {"_id": 0})
+    if not prospect:
+        raise HTTPException(404, "Prospekt hittades inte")
+    existing = await db.onboarding.count_documents({"prospect_id": pid})
+    if existing:
+        return await list_onboarding(pid, user)
+
+    start_date = prospect.get("start_date") or _now()
+    try:
+        start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+    except Exception:
+        start_dt = datetime.now(timezone.utc)
+    from datetime import timedelta as _td
+    docs = []
+    for tmpl in DEFAULT_ONBOARDING_TEMPLATE:
+        due = (start_dt + _td(days=tmpl["due_offset_days"])).isoformat()
+        docs.append({
+            "id": _id(),
+            "prospect_id": pid,
+            "title": tmpl["title"],
+            "due_offset_days": tmpl["due_offset_days"],
+            "due_date": due,
+            "completed": False,
+            "completed_at": None,
+            "completed_by_id": None,
+            "completed_by_name": None,
+            "notes": "",
+            "created_at": _now(),
+        })
+    if docs:
+        await db.onboarding.insert_many(docs)
+    await _activity(
+        "onboarding_init",
+        f"Onboarding-checklista skapad för {prospect['name']} ({len(docs)} steg)",
+        actor=user, prospect_id=pid, prospect_name=prospect["name"],
+    )
+    return await list_onboarding(pid, user)
+
+
+@api.post("/prospects/{pid}/onboarding")
+async def add_onboarding_item(pid: str, body: OnboardingItemCreate,
+                              user: dict = Depends(current_user)):
+    prospect = await db.prospects.find_one({"id": pid}, {"_id": 0})
+    if not prospect:
+        raise HTTPException(404, "Prospekt hittades inte")
+    from datetime import timedelta as _td
+    start_date = prospect.get("start_date") or _now()
+    try:
+        start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+    except Exception:
+        start_dt = datetime.now(timezone.utc)
+    doc = {
+        "id": _id(),
+        "prospect_id": pid,
+        "title": body.title,
+        "due_offset_days": body.due_offset_days,
+        "due_date": (start_dt + _td(days=body.due_offset_days)).isoformat(),
+        "completed": False,
+        "completed_at": None,
+        "completed_by_id": None,
+        "completed_by_name": None,
+        "notes": body.notes,
+        "created_at": _now(),
+    }
+    await db.onboarding.insert_one(doc)
+    return _strip_id(doc)
+
+
+@api.patch("/onboarding/{item_id}")
+async def update_onboarding(item_id: str, body: OnboardingItemUpdate,
+                            user: dict = Depends(current_user)):
+    existing = await db.onboarding.find_one({"id": item_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Onboarding-steg hittades inte")
+    updates: dict[str, Any] = {}
+    if body.title is not None:
+        updates["title"] = body.title
+    if body.notes is not None:
+        updates["notes"] = body.notes
+    if body.due_offset_days is not None:
+        updates["due_offset_days"] = body.due_offset_days
+    if body.completed is not None:
+        updates["completed"] = body.completed
+        updates["completed_at"] = _now() if body.completed else None
+        updates["completed_by_id"] = user["id"] if body.completed else None
+        updates["completed_by_name"] = user["name"] if body.completed else None
+    if not updates:
+        raise HTTPException(400, "Inget att uppdatera")
+    await db.onboarding.update_one({"id": item_id}, {"$set": updates})
+    it = await db.onboarding.find_one({"id": item_id}, {"_id": 0})
+    return _strip_id(it)
+
+
+@api.delete("/onboarding/{item_id}")
+async def delete_onboarding(item_id: str, user: dict = Depends(current_user)):
+    res = await db.onboarding.delete_one({"id": item_id})
+    if not res.deleted_count:
+        raise HTTPException(404, "Steg hittades inte")
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
