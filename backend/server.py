@@ -522,7 +522,8 @@ async def get_office(office_id: str, user: dict = Depends(current_user)):
 @api.put("/offices/{office_id}/recruitment")
 async def update_office_goal(office_id: str,
                              body: OfficeGoalUpdate,
-                             user: dict = Depends(current_user)):    office = await db.offices.find_one({"id": office_id}, {"_id": 0})
+                             user: dict = Depends(current_user)):
+    office = await db.offices.find_one({"id": office_id}, {"_id": 0})
     if not office:
         raise HTTPException(404, "Kontor hittades inte")
     existing = await db.office_goals.find_one({"office_id": office_id}, {"_id": 0})

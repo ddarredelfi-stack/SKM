@@ -1,0 +1,42 @@
+{
+  "summary": "End-to-end testing of explicit office-coupling feature for prospects. Backend (7/7 new tests) and frontend UI both fully working. Created /app/backend/tests/test_office_coupling.py covering all 6 backend requirements (POST/PATCH with office_id, GET /offices/{id} combined explicit+legacy listing without dups, /dashboard/office-recruitment counts, /link-city-prospects bulk endpoint, activity log entry). Frontend Playwright test verified: New-prospekt dialog Kontor select (data-testid='new-office'), kanban card '→ {office_name}' display, ProspectSheet office picker (data-testid='prospect-office-select') with change+save persisting to API, office-detail page navigation. Regression for create/update WITHOUT office_id still works (office_id null, office_name '').",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PATCH /api/prospects/{id}", "issue": "When office_id is cleared (set to ''), activity log entry 'office_linked' compares None != existing.get('office_id') which may not fire if existing already had None. Edge case only — not blocking."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Nytt prospekt-dialog", "issues": ["Console warning: 'Missing Description or aria-describedby for DialogContent' on RadixUI DialogContent. Accessibility nit, non-blocking."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_office_coupling.py",
+    "/app/test_reports/pytest/office_coupling_results.xml",
+    "/app/test_reports/pytest/regression_results.xml"
+  ],
+  "action_items": [
+    "Optional: Add DialogDescription or aria-describedby={undefined} to suppress RadixUI a11y warnings in Pipeline new-prospect dialog and ProspectSheet.",
+    "Optional: Update legacy /app/backend/tests/backend_test.py to authenticate (login fixture) — currently 21 endpoints return 401 because the file predates auth. Not a feature regression; just stale test infrastructure."
+  ],
+  "critical_code_review_comments": [
+    "Server.py: _resolve_office helper (lines 313-321) cleanly handles None/empty office_id by returning (None, ''). Good.",
+    "GET /api/offices/{id} (lines 453-519) correctly de-duplicates prospects via seen_ids set when merging explicit office_id matches with legacy city-matched prospects. Verified.",
+    "POST /offices/{id}/link-city-prospects: only catches prospects with city exact-match (anchored regex ^city$); case-insensitive but ignores partial matches and trimmed whitespace. Acceptable.",
+    "dashboard/office-recruitment correctly avoids double-counting by routing each prospect into EITHER office_status_counts OR city_status_counts (not both).",
+    "Activity log writes 'office_linked' on office_id transitions, but doesn't fire when transitioning from None → None (edge case only)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_office_coupling.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (7/7 new office-coupling tests + 15/36 legacy regression — legacy failures are auth-required endpoints in pre-auth tests, NOT regressions)", "frontend": "100% (all office-coupling UI flows verified end-to-end)"},
+  "test_credentials": "admin: delfi@skandiamaklarna.se / Etablering2026 — verified working, login + httpOnly cookies functional",
+  "seed_data_creation": "Tests create TEST_-prefixed prospects, auto-cleaned via DELETE in pytest fixture teardown. Playwright test also cleans up TEST_PW_OfficeCoupling via /api DELETE.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Office-coupling feature complete and verified. Backend pytest suite at /app/backend/tests/test_office_coupling.py — re-run via `pytest backend/tests/test_office_coupling.py -v`. The legacy /app/backend/tests/backend_test.py needs auth fixture added if regression coverage is desired (21 failures are all 401, not real bugs). Pipeline 'Nytt prospekt' button = data-testid='new-prospect-btn'; office select in dialog = data-testid='new-office'; ProspectSheet office select = data-testid='prospect-office-select'; sheet save = data-testid='prospect-save-btn'.",
+  "rca_of_the_issue": "No bugs found. Feature works end-to-end: explicit office_id on prospect creation/update is denormalized to office_name, prospects list correctly on office detail page (combining explicit + legacy city-match without duplicates), and recruitment dashboard counts them properly. Activity log writes 'office_linked' entries."
+}
