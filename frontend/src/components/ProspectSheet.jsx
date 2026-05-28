@@ -76,7 +76,7 @@ function renderMarkdown(md) {
   return out.join("");
 }
 
-export default function ProspectSheet({ prospect, users = [], open, onOpenChange, onUpdated, onDeleted }) {
+export default function ProspectSheet({ prospect, users = [], offices = [], open, onOpenChange, onUpdated, onDeleted }) {
   const [form, setForm] = useState(prospect || {});
   const [saving, setSaving] = useState(false);
   const [briefLoading, setBriefLoading] = useState(false);
@@ -132,6 +132,7 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
         next_step: form.next_step,
         next_step_date: form.next_step_date,
         owner_id: form.owner_id || "",
+        office_id: form.office_id || "",
         source: form.source || "Annat",
         source_detail: form.source_detail || "",
         referred_by: form.referred_by || "",
@@ -486,6 +487,30 @@ export default function ProspectSheet({ prospect, users = [], open, onOpenChange
                 value={form.referred_by || form.source_detail || ""}
                 onChange={(e) => update("referred_by", e.target.value)}
               />
+            </div>
+            <div className="sm:col-span-2">
+              <Label className="overline">Kontor (värvningsmål)</Label>
+              <Select
+                value={form.office_id || "__none__"}
+                onValueChange={(v) => update("office_id", v === "__none__" ? "" : v)}
+              >
+                <SelectTrigger data-testid="prospect-office-select" className="input-base mt-1.5">
+                  <SelectValue placeholder="Inget specifikt kontor" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  <SelectItem value="__none__">— Inget specifikt kontor —</SelectItem>
+                  {offices.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}{o.city ? ` · ${o.city}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {form.office_name && (
+                <p className="text-[11px] text-[#A1A1AA] mt-1 font-body">
+                  Kopplad till <strong className="text-[#CBA135] font-display">{form.office_name}</strong> — räknas mot kontorets rekryteringsmål.
+                </p>
+              )}
             </div>
             <div>
               <Label className="overline">Nästa steg</Label>

@@ -91,9 +91,25 @@ export default function DiscoverySheet({ city, open, onOpenChange }) {
     }
   };
 
-  const createProspect = () => {
+  const createProspect = async () => {
+    let officeId = "";
+    try {
+      const res = await api.get("/offices", { params: { city } });
+      const match = (res.data.items || []).find(
+        (o) => (o.city || "").toLowerCase() === city.toLowerCase()
+      );
+      if (match) officeId = match.id;
+    } catch {}
     navigate("/pipeline", {
-      state: { prefill: { city, region: data?.meta?.region || "", type: "office", source: "Annat" } },
+      state: {
+        prefill: {
+          city,
+          region: data?.meta?.region || "",
+          type: "office",
+          source: "Annat",
+          office_id: officeId,
+        },
+      },
     });
     onOpenChange(false);
   };

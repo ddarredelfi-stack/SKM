@@ -38,6 +38,7 @@ const empty = {
   next_step_date: "",
   source: "Annat",
   referred_by: "",
+  office_id: "",
 };
 
 export default function Pipeline() {
@@ -48,6 +49,7 @@ export default function Pipeline() {
   const [q, setQ] = useState("");
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [users, setUsers] = useState([]);
+  const [offices, setOffices] = useState([]);
   const [openDialog, setOpenDialog] = useState(false);
   const [form, setForm] = useState(empty);
   const [selected, setSelected] = useState(null);
@@ -82,12 +84,19 @@ export default function Pipeline() {
     } catch {}
   };
 
+  const loadOffices = async () => {
+    try {
+      const res = await api.get("/offices");
+      setOffices(res.data.items || []);
+    } catch {}
+  };
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, ownerFilter]);
 
-  useEffect(() => { loadUsers(); }, []);
+  useEffect(() => { loadUsers(); loadOffices(); }, []);
 
   const create = async () => {
     if (!form.name.trim()) {
@@ -229,6 +238,23 @@ export default function Pipeline() {
                   <Input data-testid="new-city" className="input-base mt-1" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
                 </div>
                 <div>
+                  <Label className="overline">Kontor (mål)</Label>
+                  <Select
+                    value={form.office_id || "__none__"}
+                    onValueChange={(v) => setForm({ ...form, office_id: v === "__none__" ? "" : v })}
+                  >
+                    <SelectTrigger data-testid="new-office" className="input-base mt-1"><SelectValue placeholder="Inget specifikt" /></SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      <SelectItem value="__none__">— Inget specifikt —</SelectItem>
+                      {offices.map((o) => (
+                        <SelectItem key={o.id} value={o.id}>
+                          {o.name} {o.city ? `· ${o.city}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
                   <Label className="overline">Källa</Label>
                   <Select value={form.source} onValueChange={(v) => setForm({ ...form, source: v })}>
                     <SelectTrigger data-testid="new-source" className="input-base mt-1"><SelectValue /></SelectTrigger>
@@ -313,6 +339,11 @@ export default function Pipeline() {
                     <div className="text-[12px] text-[#52525B] mt-0.5 font-body">
                       {p.city || "—"} {p.current_agency ? ` · ${p.current_agency}` : ""}
                     </div>
+                    {p.office_name && (
+                      <div className="text-[11px] text-[#CBA135] font-display font-bold mt-1 truncate">
+                        → {p.office_name}
+                      </div>
+                    )}
                     {p.next_step_date && (
                       <div className="mt-2 text-[11px] text-[#7C5A0F] bg-[#FAF3E1] inline-block px-2 py-0.5 rounded font-display font-bold">
                         {p.next_step || "Nästa steg"} · {formatDate(p.next_step_date)}
@@ -368,6 +399,7 @@ export default function Pipeline() {
       <ProspectSheet
         prospect={selected}
         users={users}
+        offices={offices}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         onUpdated={() => load()}

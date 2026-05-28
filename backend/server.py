@@ -163,6 +163,7 @@ class ProspectIn(BaseModel):
     source: str = "Annat"
     source_detail: str = ""
     referred_by: str = ""
+    office_id: Optional[str] = None  # explicit link to an office (preferred over city match)
     # Anbudsekonomi (deal economics)
     signing_bonus: Optional[int] = None
     commission_split: str = ""
@@ -192,6 +193,7 @@ class ProspectUpdate(BaseModel):
     source: Optional[str] = None
     source_detail: Optional[str] = None
     referred_by: Optional[str] = None
+    office_id: Optional[str] = None  # empty-string to unset
     signing_bonus: Optional[int] = None
     commission_split: Optional[str] = None
     guaranteed_salary: Optional[int] = None
@@ -306,6 +308,16 @@ async def _resolve_owner(owner_id: Optional[str]) -> tuple[Optional[str], str]:
     if not u:
         return None, ""
     return owner_id, u.get("name", "")
+
+
+async def _resolve_office(office_id: Optional[str]) -> tuple[Optional[str], str]:
+    """Look up an office by id and return (id, name)."""
+    if not office_id:
+        return None, ""
+    o = await db.offices.find_one({"id": office_id}, {"_id": 0, "name": 1})
+    if not o:
+        return None, ""
+    return office_id, o.get("name", "")
 
 
 def _strip_id(doc: dict) -> dict:
@@ -448,16 +460,29 @@ async def get_office(office_id: str, user: dict = Depends(current_user)):
     listings = [_strip_id(l) async for l in
                 db.listings.find({"office_id": office_id}, {"_id": 0}).limit(50)]
 
-    # Prospects linked to this office (by city match for now)
+    # Prospects linked to this office: explicit office_id wins; otherwise fall
+    # back to city matching for legacy/unlinked prospects.
     city_lc = (office.get("city") or "").lower()
     prospects = []
+    seen_ids = set()
+    async for p in db.prospects.find(
+        {"office_id": office_id, "is_lost": {"$ne": True}},
+        {"_id": 0},
+    ).sort("updated_at", -1):
+        prospects.append(_strip_id(p))
+        seen_ids.add(p["id"])
     if city_lc:
         async for p in db.prospects.find(
-            {"city": {"$regex": f"^{city_lc}$", "$options": "i"},
-             "is_lost": {"$ne": True}},
+            {
+                "city": {"$regex": f"^{city_lc}$", "$options": "i"},
+                "is_lost": {"$ne": True},
+                "$or": [{"office_id": None}, {"office_id": ""}, {"office_id": {"$exists": False}}],
+            },
             {"_id": 0},
         ).sort("updated_at", -1):
-            prospects.append(_strip_id(p))
+            if p["id"] not in seen_ids:
+                prospects.append(_strip_id(p))
+                seen_ids.add(p["id"])
 
     # Recruitment goal
     goal = await db.office_goals.find_one({"office_id": office_id}, {"_id": 0})
@@ -539,17 +564,22 @@ async def dashboard_office_recruitment(user: dict = Depends(current_user)):
     async for g in db.office_goals.find({}, {"_id": 0}):
         goals_map[g["office_id"]] = g
 
-    # Pre-fetch prospect status counts per city
-    city_status_counts = {}
+    # Pre-fetch prospect status counts per (office_id || city)
+    # Explicit office_id wins; legacy prospects fall back to city.
+    office_status_counts: dict[str, dict[str, int]] = {}
+    city_status_counts: dict[str, dict[str, int]] = {}
     async for p in db.prospects.find(
         {"is_lost": {"$ne": True}},
-        {"_id": 0, "city": 1, "status": 1},
+        {"_id": 0, "city": 1, "status": 1, "office_id": 1},
     ):
-        key = (p.get("city") or "").lower()
-        if not key:
-            continue
-        city_status_counts.setdefault(key, {})
-        city_status_counts[key][p["status"]] = city_status_counts[key].get(p["status"], 0) + 1
+        if p.get("office_id"):
+            target = office_status_counts.setdefault(p["office_id"], {})
+        else:
+            key = (p.get("city") or "").lower()
+            if not key:
+                continue
+            target = city_status_counts.setdefault(key, {})
+        target[p["status"]] = target.get(p["status"], 0) + 1
 
     rows = []
     total_target = total_signed = total_in_pipeline = 0
@@ -558,7 +588,11 @@ async def dashboard_office_recruitment(user: dict = Depends(current_user)):
 
     for o in offices:
         city = (o.get("city") or "").lower()
-        counts = city_status_counts.get(city, {})
+        # Sum explicit office matches + legacy city matches
+        counts: dict[str, int] = {}
+        for src in (office_status_counts.get(o["id"], {}), city_status_counts.get(city, {})):
+            for k, v in src.items():
+                counts[k] = counts.get(k, 0) + v
         signed = counts.get("Signerad", 0) + counts.get("Onboardad", 0)
         in_pipeline = sum(v for k, v in counts.items() if k != "Onboardad")
         g = goals_map.get(o["id"])
@@ -662,6 +696,7 @@ async def list_listings(q: str = "", city: str = "", broker_id: str = "",
 @api.get("/prospects")
 async def list_prospects(q: str = "", status: str = "", city: str = "",
                          owner: str = "", source: str = "",
+                         office_id: str = "",
                          include_lost: bool = False,
                          user: dict = Depends(current_user)):
     flt: dict[str, Any] = {}
@@ -673,6 +708,8 @@ async def list_prospects(q: str = "", status: str = "", city: str = "",
         flt["city"] = city
     if source:
         flt["source"] = source
+    if office_id:
+        flt["office_id"] = office_id
     if owner == "me":
         flt["owner_id"] = user["id"]
     elif owner == "unassigned":
@@ -712,6 +749,13 @@ async def create_prospect(body: ProspectIn, user: dict = Depends(current_user)):
     else:
         doc["owner_id"] = user["id"]
         doc["owner_name"] = user["name"]
+    # Office resolution (denormalize office_name for display)
+    if doc.get("office_id"):
+        ofid, ofname = await _resolve_office(doc["office_id"])
+        doc["office_id"] = ofid
+        doc["office_name"] = ofname
+    else:
+        doc["office_name"] = ""
     doc["id"] = _id()
     doc["created_at"] = _now()
     doc["updated_at"] = _now()
@@ -742,6 +786,10 @@ async def update_prospect(pid: str, body: ProspectUpdate, user: dict = Depends(c
         oid, oname = await _resolve_owner(updates["owner_id"])
         updates["owner_id"] = oid
         updates["owner_name"] = oname
+    if "office_id" in updates:
+        ofid, ofname = await _resolve_office(updates["office_id"])
+        updates["office_id"] = ofid
+        updates["office_name"] = ofname
     updates["updated_at"] = _now()
     await db.prospects.update_one({"id": pid}, {"$set": updates})
     if "status" in updates and updates["status"] != existing.get("status"):
@@ -753,6 +801,12 @@ async def update_prospect(pid: str, body: ProspectUpdate, user: dict = Depends(c
         await _activity(
             "assigned",
             f"{existing['name']} tilldelad {updates.get('owner_name') or '(ingen)'}",
+            actor=user, prospect_id=pid, prospect_name=existing["name"],
+        )
+    if "office_id" in updates and updates["office_id"] != existing.get("office_id"):
+        await _activity(
+            "office_linked",
+            f"{existing['name']} kopplad till {updates.get('office_name') or '(inget kontor)'}",
             actor=user, prospect_id=pid, prospect_name=existing["name"],
         )
     p = await db.prospects.find_one({"id": pid}, {"_id": 0})
