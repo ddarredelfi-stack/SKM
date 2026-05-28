@@ -118,3 +118,25 @@ Inspiration: Notion möter HubSpot.
 - ✅ Dashboard-rollup: "Rekrytering per kontor" — totals (i fas/efter mål/totalt mål) + topp 6 kontor med progress + "Öppna behov"-sidopanel
 - ✅ Offices-sidan: rader klickbara → leder till detail-sidan
 - ✅ Backend: GET /api/offices/{id} (utökat med goal+prospects+kpis+timeline), PUT /api/offices/{id}/recruitment, GET /api/dashboard/office-recruitment
+
+## Phase 4.5 — Explicit office-coupling på prospekt (2026-02 / iteration 8)
+- ✅ Nytt fält `office_id` på prospect (in/update models). `office_name` denormaliseras via _resolve_office helper
+- ✅ POST /api/prospects + PATCH /api/prospects/{id} accepterar office_id; tom string nollställer
+- ✅ GET /api/offices/{id} returnerar prospekt kopplade via explicit office_id PLUS legacy city-matchade utan dups (seen_ids-set)
+- ✅ GET /api/dashboard/office-recruitment summerar explicit + city-fallback i samma rad (ingen dubbelräkning)
+- ✅ Ny POST /api/offices/{id}/link-city-prospects — bulk-flyttar legacy city-matchade prospekt till explicit office_id
+- ✅ Aktivitetslogg-entry "office_linked" när koppling ändras
+- ✅ Pipeline "Nytt prospekt"-dialog har Kontor-select (data-testid `new-office`)
+- ✅ ProspectSheet har Kontor-select (data-testid `prospect-office-select`) + visningsrad "Kopplad till {namn}"
+- ✅ Kanban-kort visar "→ {office_name}" i guld när kopplat
+- ✅ Bugfix: Python-syntaxfel i server.py rad 525 (kod på samma rad som funktionssignaturen för update_office_goal) fixat
+- ✅ Test report iteration_5.json: 7/7 backend + 100% frontend end-to-end verifierat. Pytest-fil: /app/backend/tests/test_office_coupling.py
+
+## Next Tasks (Backlog prioriterad)
+- P1: "Glömt lösenord"-flöde via mejl (Resend)
+- P1: "Min profil"-sida för användare att byta eget lösenord
+- P2: Automatiska mejlpåminnelser via cron (Resend pipeline reminders)
+- P2: Bulk-import av prospekt via Excel/CSV
+- P2: Google Calendar-integration för bokade möten
+- P3: Hemnet/Booli-scraping för antal sålda objekt per mäklare
+- P3: Refaktorering — bryta upp /app/backend/server.py (~1750 rader) i routers/ (prospects, offices, auth, etc.)
