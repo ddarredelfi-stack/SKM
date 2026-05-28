@@ -14,6 +14,7 @@ import {
   Warning,
   CheckCircle,
   Clock,
+  LinkSimple,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { api, formatDate, formatDateTime, STATUS_TONE } from "../lib/api";
@@ -86,6 +87,29 @@ export default function OfficeDetail() {
 
   const removeNeed = (idx) => {
     setGoalForm((f) => ({ ...f, needs: f.needs.filter((_, i) => i !== idx) }));
+  };
+
+  const linkCityProspects = async () => {
+    const unlinkedCount = (data?.prospects || []).filter(
+      (p) => !p.office_id
+    ).length;
+    if (!unlinkedCount) {
+      toast.info("Inga ogkopplade prospekt att migrera");
+      return;
+    }
+    if (
+      !confirm(
+        `Länka ${unlinkedCount} stadsmatchade prospekt explicit till ${data.office.name}?`
+      )
+    )
+      return;
+    try {
+      const res = await api.post(`/offices/${id}/link-city-prospects`);
+      toast.success(`${res.data.linked} prospekt kopplade till ${res.data.office_name}`);
+      load();
+    } catch (e) {
+      toast.error("Fel: " + (e.response?.data?.detail || e.message));
+    }
   };
 
   if (!data) {
@@ -286,16 +310,32 @@ export default function OfficeDetail() {
 
       {/* Prospects in city */}
       <section>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div>
             <div className="overline">Värvning</div>
             <h2 className="font-display font-extrabold tracking-tight text-2xl mt-1">
               Prospekt i {office.city}
             </h2>
           </div>
-          <Link to="/pipeline" className="btn-ghost inline-flex items-center gap-1 text-xs">
-            Öppna pipeline →
-          </Link>
+          <div className="flex gap-2 items-center">
+            {(() => {
+              const unlinked = prospects.filter((p) => !p.office_id).length;
+              if (unlinked === 0) return null;
+              return (
+                <button
+                  data-testid="link-city-prospects-btn"
+                  onClick={linkCityProspects}
+                  className="btn-secondary inline-flex items-center gap-1.5 text-xs"
+                  title="Sätt office_id explicit på alla stadsmatchade prospekt"
+                >
+                  <LinkSimple size={12} weight="bold" /> Länka {unlinked} stadsmatchade
+                </button>
+              );
+            })()}
+            <Link to="/pipeline" className="btn-ghost inline-flex items-center gap-1 text-xs">
+              Öppna pipeline →
+            </Link>
+          </div>
         </div>
         {prospects.length === 0 ? (
           <div className="card-surface p-8 text-center text-sm text-[#A1A1AA] font-body" data-testid="no-prospects">
@@ -308,6 +348,7 @@ export default function OfficeDetail() {
                 <TableRow className="bg-[#FAFAFA]">
                   <TableHead className="overline">Namn</TableHead>
                   <TableHead className="overline">Status</TableHead>
+                  <TableHead className="overline">Koppling</TableHead>
                   <TableHead className="overline">Nuvarande kedja</TableHead>
                   <TableHead className="overline">Ansvarig</TableHead>
                   <TableHead className="overline">Nästa steg</TableHead>
@@ -318,6 +359,17 @@ export default function OfficeDetail() {
                   <TableRow key={p.id} className="row-hover">
                     <TableCell className="font-display font-bold text-[14px]">{p.name}</TableCell>
                     <TableCell><StatusPill status={p.status} /></TableCell>
+                    <TableCell>
+                      {p.office_id ? (
+                        <span className="text-[11px] uppercase tracking-wider font-display font-bold text-[#16A34A] bg-[#DCFCE7] px-1.5 py-0.5 rounded">
+                          ● Explicit
+                        </span>
+                      ) : (
+                        <span className="text-[11px] uppercase tracking-wider font-display font-bold text-[#52525B] bg-[#F4F4F5] px-1.5 py-0.5 rounded">
+                          Stadsmatch
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="font-body text-sm text-[#52525B]">{p.current_agency || "—"}</TableCell>
                     <TableCell className="font-body text-sm">{p.owner_name || <span className="text-[#A1A1AA]">Otilldelad</span>}</TableCell>
                     <TableCell className="font-body text-sm text-[#52525B]">

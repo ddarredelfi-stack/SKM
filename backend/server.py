@@ -522,8 +522,7 @@ async def get_office(office_id: str, user: dict = Depends(current_user)):
 @api.put("/offices/{office_id}/recruitment")
 async def update_office_goal(office_id: str,
                              body: OfficeGoalUpdate,
-                             user: dict = Depends(current_user)):
-    office = await db.offices.find_one({"id": office_id}, {"_id": 0})
+                             user: dict = Depends(current_user)):    office = await db.offices.find_one({"id": office_id}, {"_id": 0})
     if not office:
         raise HTTPException(404, "Kontor hittades inte")
     existing = await db.office_goals.find_one({"office_id": office_id}, {"_id": 0})
@@ -554,6 +553,42 @@ async def update_office_goal(office_id: str,
     )
     g = await db.office_goals.find_one({"office_id": office_id}, {"_id": 0})
     return _strip_id(g)
+
+
+@api.post("/offices/{office_id}/link-city-prospects")
+async def link_city_prospects(office_id: str, user: dict = Depends(current_user)):
+    """Bulk-assign all prospects in this office's city (without explicit office_id)
+    to this office. Used for migrating legacy city-matched prospects."""
+    office = await db.offices.find_one({"id": office_id}, {"_id": 0})
+    if not office:
+        raise HTTPException(404, "Kontor hittades inte")
+    city = office.get("city") or ""
+    if not city:
+        raise HTTPException(400, "Kontor saknar stad")
+
+    res = await db.prospects.update_many(
+        {
+            "city": {"$regex": f"^{city}$", "$options": "i"},
+            "is_lost": {"$ne": True},
+            "$or": [
+                {"office_id": None},
+                {"office_id": ""},
+                {"office_id": {"$exists": False}},
+            ],
+        },
+        {"$set": {
+            "office_id": office_id,
+            "office_name": office["name"],
+            "updated_at": _now(),
+        }},
+    )
+    if res.modified_count:
+        await _activity(
+            "bulk_office_link",
+            f"{res.modified_count} prospekt kopplade till {office['name']}",
+            actor=user,
+        )
+    return {"linked": res.modified_count, "office_id": office_id, "office_name": office["name"]}
 
 
 @api.get("/dashboard/office-recruitment")
