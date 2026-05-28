@@ -224,6 +224,13 @@ class OnboardingItemCreate(BaseModel):
     notes: str = ""
 
 
+class OfficeGoalUpdate(BaseModel):
+    target_hires: Optional[int] = None
+    deadline: Optional[str] = None  # ISO date
+    status_note: Optional[str] = None
+    needs: Optional[list[str]] = None
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
@@ -432,7 +439,7 @@ async def list_offices(q: str = "", city: str = "", region: str = ""):
 
 
 @api.get("/offices/{office_id}")
-async def get_office(office_id: str):
+async def get_office(office_id: str, user: dict = Depends(current_user)):
     office = await db.offices.find_one({"id": office_id}, {"_id": 0})
     if not office:
         raise HTTPException(404, "Kontor hittades inte")
@@ -440,7 +447,172 @@ async def get_office(office_id: str):
                db.brokers.find({"office_id": office_id}, {"_id": 0}).sort("name", 1)]
     listings = [_strip_id(l) async for l in
                 db.listings.find({"office_id": office_id}, {"_id": 0}).limit(50)]
-    return {"office": office, "brokers": brokers, "listings": listings}
+
+    # Prospects linked to this office (by city match for now)
+    city_lc = (office.get("city") or "").lower()
+    prospects = []
+    if city_lc:
+        async for p in db.prospects.find(
+            {"city": {"$regex": f"^{city_lc}$", "$options": "i"},
+             "is_lost": {"$ne": True}},
+            {"_id": 0},
+        ).sort("updated_at", -1):
+            prospects.append(_strip_id(p))
+
+    # Recruitment goal
+    goal = await db.office_goals.find_one({"office_id": office_id}, {"_id": 0})
+
+    # Auto-derived counts
+    signed_count = sum(1 for p in prospects if p.get("status") in ("Signerad", "Onboardad"))
+    onboarded_count = sum(1 for p in prospects if p.get("status") == "Onboardad")
+    in_pipeline = sum(1 for p in prospects if p.get("status") not in ("Onboardad",))
+
+    # Activity for prospects linked to this office (last 25)
+    pids = [p["id"] for p in prospects]
+    timeline = []
+    if pids:
+        async for a in db.activity.find(
+            {"prospect_id": {"$in": pids}},
+            {"_id": 0},
+        ).sort("created_at", -1).limit(25):
+            timeline.append(_strip_id(a))
+
+    return {
+        "office": office,
+        "brokers": brokers,
+        "listings": listings,
+        "prospects": prospects,
+        "goal": _strip_id(goal) if goal else None,
+        "kpis": {
+            "broker_count": len(brokers),
+            "listing_count": len(listings),
+            "active_prospects": in_pipeline,
+            "signed_or_onboarded": signed_count,
+            "onboarded": onboarded_count,
+        },
+        "timeline": timeline,
+    }
+
+
+@api.put("/offices/{office_id}/recruitment")
+async def update_office_goal(office_id: str,
+                             body: OfficeGoalUpdate,
+                             user: dict = Depends(current_user)):
+    office = await db.offices.find_one({"id": office_id}, {"_id": 0})
+    if not office:
+        raise HTTPException(404, "Kontor hittades inte")
+    existing = await db.office_goals.find_one({"office_id": office_id}, {"_id": 0})
+    payload = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if existing:
+        payload["updated_at"] = _now()
+        payload["updated_by_id"] = user["id"]
+        payload["updated_by_name"] = user["name"]
+        await db.office_goals.update_one({"office_id": office_id}, {"$set": payload})
+    else:
+        payload = {
+            "id": _id(),
+            "office_id": office_id,
+            "target_hires": payload.get("target_hires", 0),
+            "deadline": payload.get("deadline"),
+            "status_note": payload.get("status_note", ""),
+            "needs": payload.get("needs", []),
+            "created_at": _now(),
+            "updated_at": _now(),
+            "updated_by_id": user["id"],
+            "updated_by_name": user["name"],
+        }
+        await db.office_goals.insert_one(payload)
+    await _activity(
+        "office_goal_updated",
+        f"Rekryteringsmål uppdaterat för {office['name']}",
+        actor=user,
+    )
+    g = await db.office_goals.find_one({"office_id": office_id}, {"_id": 0})
+    return _strip_id(g)
+
+
+@api.get("/dashboard/office-recruitment")
+async def dashboard_office_recruitment(user: dict = Depends(current_user)):
+    """Aggregated rollup of all office recruitment goals — for dashboard."""
+    offices = [_strip_id(o) async for o in db.offices.find({}, {"_id": 0})]
+    goals_map = {}
+    async for g in db.office_goals.find({}, {"_id": 0}):
+        goals_map[g["office_id"]] = g
+
+    # Pre-fetch prospect status counts per city
+    city_status_counts = {}
+    async for p in db.prospects.find(
+        {"is_lost": {"$ne": True}},
+        {"_id": 0, "city": 1, "status": 1},
+    ):
+        key = (p.get("city") or "").lower()
+        if not key:
+            continue
+        city_status_counts.setdefault(key, {})
+        city_status_counts[key][p["status"]] = city_status_counts[key].get(p["status"], 0) + 1
+
+    rows = []
+    total_target = total_signed = total_in_pipeline = 0
+    behind = on_track = no_goal = 0
+    all_needs = []
+
+    for o in offices:
+        city = (o.get("city") or "").lower()
+        counts = city_status_counts.get(city, {})
+        signed = counts.get("Signerad", 0) + counts.get("Onboardad", 0)
+        in_pipeline = sum(v for k, v in counts.items() if k != "Onboardad")
+        g = goals_map.get(o["id"])
+        target = (g or {}).get("target_hires") or 0
+        deadline = (g or {}).get("deadline")
+        needs = (g or {}).get("needs") or []
+        status_note = (g or {}).get("status_note") or ""
+
+        status = "no_goal"
+        if target > 0:
+            ratio = signed / target if target else 0
+            status = "on_track" if ratio >= 0.5 else "behind"
+        if target == 0:
+            no_goal += 1
+        elif status == "on_track":
+            on_track += 1
+        else:
+            behind += 1
+
+        total_target += target
+        total_signed += signed
+        total_in_pipeline += in_pipeline
+        all_needs.extend([(o["name"], n) for n in needs])
+
+        rows.append({
+            "office_id": o["id"],
+            "office_name": o["name"],
+            "city": o.get("city", ""),
+            "region": o.get("region", ""),
+            "target_hires": target,
+            "current_hires": signed,
+            "in_pipeline": in_pipeline,
+            "deadline": deadline,
+            "needs": needs,
+            "status_note": status_note,
+            "status": status,
+        })
+
+    rows.sort(key=lambda r: (r["status"] != "behind", -r["target_hires"], r["office_name"]))
+    return {
+        "rows": rows,
+        "totals": {
+            "offices": len(offices),
+            "with_goal": len(offices) - no_goal,
+            "no_goal": no_goal,
+            "on_track": on_track,
+            "behind": behind,
+            "total_target": total_target,
+            "total_signed": total_signed,
+            "total_in_pipeline": total_in_pipeline,
+            "open_needs": len(all_needs),
+        },
+        "open_needs": [{"office_name": n[0], "need": n[1]} for n in all_needs],
+    }
 
 
 @api.get("/brokers")

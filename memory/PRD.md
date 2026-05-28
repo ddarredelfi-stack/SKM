@@ -104,3 +104,17 @@ Inspiration: Notion möter HubSpot.
   - Räknare "Onboarding (X/11)" i sektionens header
 - ✅ ProspectSheet utökad med 3 nya sektioner (Ekonomi, Dokument, Onboarding) — flat scroll, samma design-språk
 - ✅ Object storage initieras vid backend startup, ENV: EMERGENT_LLM_KEY (delas med LLM)
+
+## Phase 4 — Office detail pages + Recruitment goals (Steg 6+7, 2026-02 / iteration 7)
+- ✅ NY route /offices/:id — full office detail page
+- ✅ Office detail: kontorsinfo (namn, adress, manager, region, tel, mejl), klickbar länk till skandiamaklarna.se
+- ✅ 4 KPI-kort på detail: Mäklare-count, Aktiva objekt, Prospekt i stan, Rekryteringsmål (med färg: grön=i fas, röd=ligger efter)
+- ✅ Steg 7 — Rekryteringsmodul: target_hires + deadline + status_note (kontorschefens flagga) + needs[] (tag-list)
+- ✅ Auto-derived current_hires = prospects i samma stad med status Signerad eller Onboardad
+- ✅ Visuell progress-bar (grön/röd baserat på ratio current/target)
+- ✅ "Behov-taggar" med add/remove (BR-specialist, etc.)
+- ✅ Aktiva mäklare-tabell + Prospekt-i-staden-tabell (med StatusPill)
+- ✅ Tidslinje-sektion: aktivitetslogg filtrerad på prospect_id i kontorets stad
+- ✅ Dashboard-rollup: "Rekrytering per kontor" — totals (i fas/efter mål/totalt mål) + topp 6 kontor med progress + "Öppna behov"-sidopanel
+- ✅ Offices-sidan: rader klickbara → leder till detail-sidan
+- ✅ Backend: GET /api/offices/{id} (utökat med goal+prospects+kpis+timeline), PUT /api/offices/{id}/recruitment, GET /api/dashboard/office-recruitment

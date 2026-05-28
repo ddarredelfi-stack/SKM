@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { MagnifyingGlass, DownloadSimple, MapPin, Phone, EnvelopeSimple, ArrowSquareOut } from "@phosphor-icons/react";
+import { Link } from "react-router-dom";
+import { MagnifyingGlass, DownloadSimple, MapPin, Phone, EnvelopeSimple, ArrowSquareOut, CaretRight } from "@phosphor-icons/react";
 import { api, downloadCsv } from "../lib/api";
 import { Input } from "../components/ui/input";
 import {
@@ -69,7 +70,14 @@ export default function Offices() {
               <TableRow key={o.id} className="row-hover">
                 <TableCell className="py-4">
                   <div className="flex items-center gap-2">
-                    <div className="font-display font-bold text-[14px] text-[#0A0A0A]">{o.name}</div>
+                    <Link
+                      to={`/offices/${o.id}`}
+                      data-testid={`office-row-link-${o.id}`}
+                      className="font-display font-bold text-[14px] text-[#0A0A0A] hover:text-[#CBA135] inline-flex items-center gap-1"
+                    >
+                      {o.name}
+                      <CaretRight size={12} weight="bold" className="text-[#A1A1AA]" />
+                    </Link>
                     {o.website && (
                       <a
                         href={o.website}

@@ -11,6 +11,8 @@ import {
   Clock,
   XCircle,
   Lightning,
+  Warning,
+  CheckCircle,
 } from "@phosphor-icons/react";
 import { api, formatNumber, PIPELINE_STATUSES, STATUS_TONE, daysSince } from "../lib/api";
 import KpiCard from "../components/KpiCard";
@@ -19,14 +21,17 @@ import ActivityFeed from "../components/ActivityFeed";
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [insights, setInsights] = useState(null);
+  const [officeGoals, setOfficeGoals] = useState(null);
 
   const load = async () => {
-    const [k, i] = await Promise.all([
+    const [k, i, og] = await Promise.all([
       api.get("/dashboard/kpis"),
       api.get("/dashboard/insights"),
+      api.get("/dashboard/office-recruitment"),
     ]);
     setData(k.data);
     setInsights(i.data);
+    setOfficeGoals(og.data);
   };
 
   useEffect(() => {
@@ -382,6 +387,99 @@ export default function Dashboard() {
             >
               Öppna pipeline <ArrowUpRight size={11} />
             </Link>
+          </div>
+        </section>
+      )}
+
+      {/* Office recruitment rollup */}
+      {officeGoals && officeGoals.totals.with_goal > 0 && (
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6" data-testid="office-recruitment-rollup">
+          <div className="card-surface p-6 fade-up lg:col-span-2">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <div className="overline">Rekrytering per kontor</div>
+                <h2 className="font-display font-extrabold tracking-tight text-xl mt-1 flex items-center gap-2">
+                  <Buildings size={18} color="#CBA135" weight="duotone" />
+                  Mål vs utfall · {officeGoals.totals.with_goal} kontor med mål
+                </h2>
+              </div>
+              <Link to="/offices" className="btn-ghost inline-flex items-center gap-1 text-xs">
+                Alla kontor <ArrowUpRight size={11} />
+              </Link>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="text-center p-3 rounded-md bg-[#DCFCE7]">
+                <div className="text-[10px] uppercase tracking-wider font-display font-bold text-[#14532D]">I fas</div>
+                <div className="font-display font-extrabold text-2xl tabular-nums text-[#16A34A] mt-1">{officeGoals.totals.on_track}</div>
+              </div>
+              <div className="text-center p-3 rounded-md bg-[#FEF2F2]">
+                <div className="text-[10px] uppercase tracking-wider font-display font-bold text-[#7F1D1D]">Efter mål</div>
+                <div className="font-display font-extrabold text-2xl tabular-nums text-[#DC2626] mt-1">{officeGoals.totals.behind}</div>
+              </div>
+              <div className="text-center p-3 rounded-md bg-[#FAF3E1]">
+                <div className="text-[10px] uppercase tracking-wider font-display font-bold text-[#7C5A0F]">Totalt mål</div>
+                <div className="font-display font-extrabold text-2xl tabular-nums text-[#CBA135] mt-1">{officeGoals.totals.total_signed}/{officeGoals.totals.total_target}</div>
+              </div>
+            </div>
+
+            <ul className="flex flex-col divide-y divide-[#E5E5E5]">
+              {officeGoals.rows.filter((r) => r.target_hires > 0).slice(0, 6).map((r) => {
+                const pct = r.target_hires > 0 ? Math.min(100, Math.round((r.current_hires / r.target_hires) * 100)) : 0;
+                const color = r.status === "behind" ? "#DC2626" : "#22C55E";
+                return (
+                  <li
+                    key={r.office_id}
+                    data-testid={`rollup-row-${r.office_id}`}
+                    className="py-2.5"
+                  >
+                    <Link to={`/offices/${r.office_id}`} className="flex items-center gap-3 group">
+                      {r.status === "behind" ? (
+                        <Warning size={14} color="#DC2626" weight="duotone" />
+                      ) : (
+                        <CheckCircle size={14} color="#22C55E" weight="duotone" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-display font-bold text-[13px] truncate group-hover:text-[#CBA135]">{r.office_name}</div>
+                        <div className="text-[11px] text-[#52525B] font-body">
+                          {r.city}{r.deadline ? ` · deadline ${r.deadline.slice(0, 10)}` : ""}
+                        </div>
+                      </div>
+                      <div className="flex-1 max-w-[160px] hidden sm:block">
+                        <div className="h-1.5 bg-[#F4F4F5] rounded-full overflow-hidden">
+                          <div className="h-full" style={{ width: `${pct}%`, background: color }} />
+                        </div>
+                      </div>
+                      <div className="text-right font-display font-extrabold tabular-nums text-sm w-12">
+                        {r.current_hires}/{r.target_hires}
+                      </div>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          <div className="card-surface p-6 fade-up delay-1">
+            <div className="overline mb-1">Öppna behov</div>
+            <h2 className="font-display font-extrabold tracking-tight text-xl mb-4 flex items-center gap-2">
+              <Target size={18} color="#CBA135" weight="duotone" />
+              {officeGoals.totals.open_needs} behov flaggade
+            </h2>
+            {officeGoals.open_needs.length === 0 ? (
+              <p className="text-sm text-[#A1A1AA] font-body">
+                Inga specifika behov flaggade från kontorscheferna.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {officeGoals.open_needs.slice(0, 8).map((n, i) => (
+                  <li key={i} className="text-[13px] font-body">
+                    <span className="font-display font-bold text-[#0A0A0A]">{n.office_name}:</span>{" "}
+                    <span className="text-[#52525B]">{n.need}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </section>
       )}

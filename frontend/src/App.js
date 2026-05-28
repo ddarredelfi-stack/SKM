@@ -14,6 +14,7 @@ import Scrape from "@/pages/Scrape";
 import Settings from "@/pages/Settings";
 import Team from "@/pages/Team";
 import Lost from "@/pages/Lost";
+import OfficeDetail from "@/pages/OfficeDetail";
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user } = useAuth();
@@ -57,6 +58,7 @@ function AppRoutes() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/pipeline" element={<Pipeline />} />
                 <Route path="/offices" element={<Offices />} />
+                <Route path="/offices/:id" element={<OfficeDetail />} />
                 <Route path="/brokers" element={<Brokers />} />
                 <Route path="/map" element={<MapView />} />
                 <Route path="/scrape" element={<Scrape />} />
