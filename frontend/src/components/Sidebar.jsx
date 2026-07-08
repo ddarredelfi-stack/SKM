@@ -11,6 +11,7 @@ import {
   SignOut,
   UsersFour,
   XCircle,
+  Warning,
 } from "@phosphor-icons/react";
 import { useAuth } from "../lib/auth";
 
@@ -19,6 +20,7 @@ const links = [
   { to: "/pipeline", label: "Pipeline", icon: Kanban, testId: "nav-pipeline" },
   { to: "/lost", label: "Förlorade", icon: XCircle, testId: "nav-lost" },
   { to: "/offices", label: "Kontor", icon: Buildings, testId: "nav-offices" },
+  { to: "/akutlista", label: "Akutlista (Prio 1)", icon: Warning, testId: "nav-akutlista" },
   { to: "/brokers", label: "Mäklare", icon: UsersThree, testId: "nav-brokers" },
   { to: "/map", label: "Karta & White Spots", icon: MapTrifold, testId: "nav-map" },
   { to: "/scrape", label: "Scraping", icon: ArrowsClockwise, testId: "nav-scrape" },

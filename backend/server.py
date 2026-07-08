@@ -48,6 +48,7 @@ from seed_data import (  # noqa: E402
     build_goals,
     build_prospects,
     build_seed,
+    get_extra_units,
 )
 from storage_service import (  # noqa: E402
     build_path,
@@ -366,6 +367,19 @@ async def kpis(stale_days: int = 14):
         pipeline_value += int(p.get("expected_first_year_revenue") or 0)
         pipeline_value += int(p.get("signing_bonus") or 0)
 
+    # Kontorsprestanda-rollup från kontorslistan (kategori/prio/omsättning)
+    kategori_breakdown: dict[str, int] = {}
+    async for r in db.offices.aggregate([{"$group": {"_id": "$kategori", "count": {"$sum": 1}}}]):
+        if r["_id"]:
+            kategori_breakdown[r["_id"]] = r["count"]
+    prio1_count = await db.offices.count_documents({"prio": "1"})
+    oms_row = await db.offices.aggregate([
+        {"$group": {"_id": None, "oms": {"$sum": "$oms"}, "oms_fjol": {"$sum": "$oms_fjol"}}}
+    ]).to_list(1)
+    total_oms = oms_row[0]["oms"] if oms_row else 0
+    total_oms_fjol = oms_row[0]["oms_fjol"] if oms_row else 0
+    total_oms_yoy = round((total_oms - total_oms_fjol) / total_oms_fjol * 100, 1) if total_oms_fjol else None
+
     return {
         "offices": offices,
         "brokers": brokers,
@@ -379,6 +393,13 @@ async def kpis(stale_days: int = 14):
         "stale_count": stale_count,
         "stale_days": stale_days,
         "pipeline_value": pipeline_value,
+        "office_performance": {
+            "kategori": kategori_breakdown,
+            "prio1_count": prio1_count,
+            "total_oms": total_oms,
+            "total_oms_fjol": total_oms_fjol,
+            "total_oms_yoy_pct": total_oms_yoy,
+        },
         "as_of": _now(),
     }
 
@@ -433,12 +454,17 @@ async def insights(stale_days: int = Query(14, ge=1, le=180),
 # Offices / Brokers / Listings (read-only)
 # ---------------------------------------------------------------------------
 @api.get("/offices")
-async def list_offices(q: str = "", city: str = "", region: str = ""):
+async def list_offices(q: str = "", city: str = "", region: str = "",
+                        kategori: str = "", prio: str = "", sort: str = "name"):
     flt: dict[str, Any] = {}
     if city:
         flt["city"] = city
     if region:
         flt["region"] = region
+    if kategori:
+        flt["kategori"] = kategori
+    if prio:
+        flt["prio"] = prio
     if q:
         flt["$or"] = [
             {"name": {"$regex": q, "$options": "i"}},
@@ -446,8 +472,22 @@ async def list_offices(q: str = "", city: str = "", region: str = ""):
             {"manager": {"$regex": q, "$options": "i"}},
             {"address": {"$regex": q, "$options": "i"}},
         ]
-    items = [_strip_id(o) async for o in db.offices.find(flt, {"_id": 0}).sort("name", 1)]
+    sort_map = {
+        "name": [("name", 1)],
+        "prio": [("prio_num", 1), ("oms", -1)],
+        "oms": [("oms", -1)],
+        "yoy": [("yoy_pct", 1)],
+    }
+    cursor = db.offices.find(flt, {"_id": 0}).sort(sort_map.get(sort, sort_map["name"]))
+    items = [_strip_id(o) async for o in cursor]
     return {"items": items, "total": len(items)}
+
+
+@api.get("/offices/extra-units")
+async def offices_extra_units():
+    """Kommersiella / vilande enheter från kontorslistan utan tilldelad prio.
+    Read-only reference data — not part of the operational offices collection."""
+    return {"items": get_extra_units()}
 
 
 @api.get("/offices/{office_id}")
@@ -1433,6 +1473,29 @@ async def scrape_sync(user: dict = Depends(current_user)):
         broker_docs.extend(to_broker_docs(p, od))
         discovered_docs.append({**p, "scraped_at": _now()})
 
+    # Preserve internal kontorslista-data (kategori/prio/omsättning/kommentar)
+    # across the scrape by matching on normalized city/name — the public site
+    # doesn't expose this, so a naive replace would silently wipe it.
+    _PERF_FIELDS = ["kategori", "prio", "prio_num", "oms", "oms_fjol", "sald",
+                    "sald_fjol", "yoy_pct", "kommentar", "recommended_action"]
+
+    def _norm(s: str | None) -> str:
+        return (s or "").strip().lower()
+
+    perf_by_key: dict[str, dict] = {}
+    async for old in db.offices.find({}, {"_id": 0}):
+        key = _norm(old.get("city")) or _norm(old.get("name"))
+        if key and any(old.get(f) is not None for f in _PERF_FIELDS):
+            perf_by_key[key] = {f: old.get(f) for f in _PERF_FIELDS}
+
+    perf_carried = 0
+    for od in office_docs:
+        key = _norm(od.get("city")) or _norm(od.get("name"))
+        match = perf_by_key.get(key)
+        if match:
+            od.update(match)
+            perf_carried += 1
+
     # Replace primary collections atomically (best-effort sequential)
     await db.offices.delete_many({})
     if office_docs:
@@ -1449,7 +1512,8 @@ async def scrape_sync(user: dict = Depends(current_user)):
 
     await _activity(
         "scrape",
-        f"Full sync klar — {len(office_docs)} kontor, {len(broker_docs)} mäklare ersatte tidigare data",
+        f"Full sync klar — {len(office_docs)} kontor, {len(broker_docs)} mäklare ersatte tidigare data "
+        f"({perf_carried} kontor behöll kategori/prio/omsättning från kontorslistan)",
         actor=user,
     )
 
@@ -1457,6 +1521,7 @@ async def scrape_sync(user: dict = Depends(current_user)):
         **result,
         "record_id": record["id"],
         "replaced": True,
+        "performance_data_carried": perf_carried,
         "offices_written": len(office_docs),
         "brokers_written": len(broker_docs),
     }
@@ -1558,7 +1623,8 @@ async def export_offices_csv(user: dict = Depends(current_user)):
     items = [_strip_id(o) async for o in db.offices.find({}, {"_id": 0}).sort("name", 1)]
     return _csv_response(
         items,
-        ["name", "city", "region", "address", "phone", "email", "manager", "website"],
+        ["name", "city", "region", "address", "phone", "email", "manager", "website",
+         "kategori", "prio", "oms", "oms_fjol", "yoy_pct", "sald", "sald_fjol", "kommentar"],
         "skandia-kontor.csv",
     )
 

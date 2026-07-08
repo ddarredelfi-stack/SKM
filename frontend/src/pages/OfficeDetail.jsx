@@ -15,9 +15,10 @@ import {
   CheckCircle,
   Clock,
   LinkSimple,
+  ChartLineUp,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
-import { api, formatDate, formatDateTime, STATUS_TONE } from "../lib/api";
+import { api, formatDate, formatDateTime, formatSEK, formatPct, STATUS_TONE } from "../lib/api";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
@@ -30,6 +31,7 @@ import {
   TableRow,
 } from "../components/ui/table";
 import StatusPill from "../components/StatusPill";
+import KategoriPill from "../components/KategoriPill";
 import ActivityFeed from "../components/ActivityFeed";
 
 export default function OfficeDetail() {
@@ -189,6 +191,58 @@ export default function OfficeDetail() {
           testId="kpi-goal"
         />
       </section>
+
+      {/* Performance from kontorslistan */}
+      {office.kategori && (
+        <section className="card-surface p-6" data-testid="performance-section">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div>
+              <div className="overline">Kontorslistan</div>
+              <h2 className="font-display font-extrabold tracking-tight text-xl mt-1 flex items-center gap-2">
+                <ChartLineUp size={18} color="#CBA135" weight="duotone" /> Prestanda
+              </h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <KategoriPill kategori={office.kategori} size="lg" />
+              {office.prio && (
+                <span className="text-[11px] uppercase tracking-wider font-display font-bold text-[#0A0A0A] bg-[#F4F4F5] px-2.5 py-1.5 rounded-full">
+                  Prio {office.prio}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <div className="overline">Omsättning (period)</div>
+              <div className="font-display font-extrabold tracking-tighter text-2xl mt-1">{formatSEK(office.oms)}</div>
+              <div className="text-[12px] font-body mt-0.5" style={{ color: (office.yoy_pct ?? 0) >= 0 ? "#1E5B34" : "#9A2E22" }}>
+                {formatPct(office.yoy_pct)} vs. föregående år
+              </div>
+            </div>
+            <div>
+              <div className="overline">Omsättning ifjol</div>
+              <div className="font-display font-extrabold tracking-tighter text-2xl mt-1">{formatSEK(office.oms_fjol)}</div>
+            </div>
+            <div>
+              <div className="overline">Sålda objekt</div>
+              <div className="font-display font-extrabold tracking-tighter text-2xl mt-1">{office.sald}</div>
+              <div className="text-[12px] text-[#52525B] font-body mt-0.5">{office.sald_fjol} ifjol</div>
+            </div>
+            <div>
+              <div className="overline">Kommentar</div>
+              <div className="text-[13px] font-body mt-1.5">{office.kommentar || "—"}</div>
+            </div>
+          </div>
+          {office.recommended_action && (
+            <div className="mt-5 pt-4 border-t border-[#E5E5E5]">
+              <div className="overline flex items-center gap-1.5 text-[#9A2E22]">
+                <Warning size={12} weight="bold" /> Prio 1 — rekommenderad åtgärd
+              </div>
+              <p className="text-[13px] font-body mt-1.5 text-[#0A0A0A] leading-relaxed">{office.recommended_action}</p>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Recruitment goal editor */}
       <section className="card-surface p-6" data-testid="recruitment-section">

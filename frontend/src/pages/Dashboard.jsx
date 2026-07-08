@@ -201,6 +201,64 @@ export default function Dashboard() {
         </div>
       </section>
 
+      {/* Kontorsprestanda från kontorslistan */}
+      {data.office_performance && (
+        <section className="card-surface p-6 fade-up delay-2" data-testid="office-performance-section">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div>
+              <div className="overline">Kontorslistan</div>
+              <h2 className="font-display font-extrabold tracking-tight text-xl mt-1 flex items-center gap-2">
+                <Warning size={18} color="#C94C3F" weight="duotone" /> Kontorsprestanda
+              </h2>
+            </div>
+            <Link
+              to="/akutlista"
+              data-testid="open-akutlista-link"
+              className="btn-secondary inline-flex items-center gap-1.5 text-xs"
+            >
+              Öppna akutlistan <ArrowUpRight size={12} />
+            </Link>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="rounded-lg p-4" style={{ background: "#FDEDEB" }}>
+              <div className="overline" style={{ color: "#9A2E22" }}>Problem</div>
+              <div className="font-display font-extrabold tracking-tighter text-3xl mt-1" style={{ color: "#9A2E22" }}>
+                {data.office_performance.kategori?.PROBLEM || 0}
+              </div>
+              <div className="text-[12px] font-body mt-0.5" style={{ color: "#9A2E22" }}>
+                varav {data.office_performance.prio1_count} Prio 1
+              </div>
+            </div>
+            <div className="rounded-lg p-4" style={{ background: "#FBF1DC" }}>
+              <div className="overline" style={{ color: "#7C5A0F" }}>Utmaningar</div>
+              <div className="font-display font-extrabold tracking-tighter text-3xl mt-1" style={{ color: "#7C5A0F" }}>
+                {data.office_performance.kategori?.UTMANINGAR || 0}
+              </div>
+            </div>
+            <div className="rounded-lg p-4" style={{ background: "#E6F4EA" }}>
+              <div className="overline" style={{ color: "#1E5B34" }}>OK / Kör</div>
+              <div className="font-display font-extrabold tracking-tighter text-3xl mt-1" style={{ color: "#1E5B34" }}>
+                {data.office_performance.kategori?.OK || 0}
+              </div>
+            </div>
+            <div>
+              <div className="overline">Total omsättning</div>
+              <div className="font-display font-extrabold tracking-tighter text-3xl mt-1">
+                {new Intl.NumberFormat("sv-SE", { notation: "compact", maximumFractionDigits: 1 }).format(data.office_performance.total_oms || 0)}
+              </div>
+              <div
+                className="text-[12px] font-body mt-0.5"
+                style={{ color: (data.office_performance.total_oms_yoy_pct ?? 0) >= 0 ? "#1E5B34" : "#9A2E22" }}
+              >
+                {data.office_performance.total_oms_yoy_pct != null
+                  ? `${data.office_performance.total_oms_yoy_pct >= 0 ? "+" : ""}${data.office_performance.total_oms_yoy_pct}% YoY`
+                  : "—"}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {/* Activity + Quick nav */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="card-surface p-6 lg:col-span-2 fade-up delay-3">

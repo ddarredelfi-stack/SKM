@@ -53,6 +53,25 @@ export const COMPETITOR_AGENCIES = [
   "Annan",
 ];
 
+export const KATEGORI_TONE = {
+  PROBLEM: { bg: "#FDEDEB", fg: "#9A2E22", dot: "#C94C3F" },
+  UTMANINGAR: { bg: "#FBF1DC", fg: "#7C5A0F", dot: "#D9A441" },
+  OK: { bg: "#E6F4EA", fg: "#1E5B34", dot: "#3F8F5F" },
+};
+
+export const formatSEK = (n) => {
+  if (typeof n !== "number") return "—";
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1).replace(".", ",")} Mkr`;
+  if (Math.abs(n) >= 1e3) return `${Math.round(n / 1e3)} tkr`;
+  return `${n.toLocaleString("sv-SE")} kr`;
+};
+
+export const formatPct = (n) => {
+  if (typeof n !== "number") return "—";
+  const sign = n >= 0 ? "+" : "";
+  return `${sign}${n.toFixed(1).replace(".", ",")}%`;
+};
+
 export const daysSince = (iso) => {
   if (!iso) return 0;
   const ms = Date.now() - new Date(iso).getTime();

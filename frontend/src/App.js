@@ -8,6 +8,7 @@ import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import Pipeline from "@/pages/Pipeline";
 import Offices from "@/pages/Offices";
+import Akutlista from "@/pages/Akutlista";
 import Brokers from "@/pages/Brokers";
 import MapView from "@/pages/MapView";
 import Scrape from "@/pages/Scrape";
@@ -58,6 +59,7 @@ function AppRoutes() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/pipeline" element={<Pipeline />} />
                 <Route path="/offices" element={<Offices />} />
+                <Route path="/akutlista" element={<Akutlista />} />
                 <Route path="/offices/:id" element={<OfficeDetail />} />
                 <Route path="/brokers" element={<Brokers />} />
                 <Route path="/map" element={<MapView />} />

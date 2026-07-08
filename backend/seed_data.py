@@ -9,6 +9,8 @@ import uuid
 import random
 from datetime import datetime, timezone, timedelta
 
+from real_offices_data import REAL_OFFICES, EXTRA_UNITS  # noqa: E402
+
 
 def _id() -> str:
     return str(uuid.uuid4())
@@ -21,6 +23,9 @@ AVATAR_M2 = "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?crop=e
 AVATAR_F3 = "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?crop=entropy&cs=srgb&fm=jpg&w=400&q=80"
 
 
+# Legacy fictional seed sample — superseded by REAL_OFFICES (see
+# real_offices_data.py, sourced from the actual Skandiamäklarna kontorslista).
+# Kept only for reference / rollback, no longer used by build_seed().
 # Offices: (name, city, region, address, phone, manager, lat, lng)
 _OFFICE_RAW = [
     ("Skandiamäklarna Östermalm",    "Stockholm",  "Stockholms län",        "Karlavägen 60, 114 49 Stockholm",   "08-411 80 00", "Henrik Lindqvist",   59.3382, 18.0890),
@@ -76,43 +81,40 @@ def _slug(name: str) -> str:
 
 
 def build_seed():
+    """Build offices/brokers/listings from the REAL office list (kontorslista).
+
+    Office identity fields we don't have (exact street address, phone, named
+    kontorschef) get a placeholder until either a live scrape fills them in
+    or someone edits them by hand. Mäklare/listings are still generated
+    (no public roster in the source data), but broker_count is scaled to the
+    office's actual 'sålda objekt' so bigger/busier offices get more people
+    instead of a flat random range.
+    """
     random.seed(42)
     offices, brokers, listings = [], [], []
     now = datetime.now(timezone.utc).isoformat()
 
-    for raw in _OFFICE_RAW:
-        name, city, region, address, phone, manager, lat, lng = raw
+    for perf in REAL_OFFICES:
+        name = perf["name"]
+        city = perf["city"]
+        region = perf["region"]
+        lat, lng = perf["lat"], perf["lng"]
         office_id = _id()
-        slug = name.lower().replace("skandiamäklarna ", "").replace(" ", "-")
-        offices.append({
-            "id": office_id,
-            "name": name,
-            "city": city,
-            "region": region,
-            "address": address,
-            "phone": phone,
-            "manager": manager,
-            "lat": lat,
-            "lng": lng,
-            "email": f"{slug}@skandiamaklarna.se".replace("å", "a").replace("ä", "a").replace("ö", "o"),
-            "website": f"https://www.skandiamaklarna.se/maklare/{slug}",
-            "source": "seed",
-            "scraped_at": now,
-        })
+        slug = (name.lower().replace("skandiamäklarna ", "")
+                .replace("/", "-").replace(" ", "-")
+                .replace("å", "a").replace("ä", "a").replace("ö", "o"))
 
-        broker_count = random.randint(4, 9)
+        broker_count = max(2, min(18, round((perf["sald"] or 0) / 7))) or random.randint(2, 5)
+        office_brokers = []
         for i in range(broker_count):
             is_f = random.random() > 0.45
             first = random.choice(_FIRSTNAMES_F if is_f else _FIRSTNAMES_M)
             last = random.choice(_LASTNAMES)
             full = f"{first} {last}"
             broker_id = _id()
-            title = "Kontorschef" if (i == 0 and manager == full) else random.choice(TITLES)
-            if i == 0:
-                full = manager
-                title = "Kontorschef"
-            avatar = random.choice([AVATAR_F, AVATAR_F2, AVATAR_F3]) if is_f or i == 0 and manager.split()[0] in _FIRSTNAMES_F else random.choice([AVATAR_M, AVATAR_M2])
-            brokers.append({
+            title = "Kontorschef" if i == 0 else random.choice(TITLES)
+            avatar = random.choice([AVATAR_F, AVATAR_F2, AVATAR_F3]) if is_f else random.choice([AVATAR_M, AVATAR_M2])
+            office_brokers.append({
                 "id": broker_id,
                 "name": full,
                 "title": title,
@@ -128,7 +130,6 @@ def build_seed():
                 "scraped_at": now,
             })
 
-            # Active listings for this broker
             for _ in range(random.randint(0, 5)):
                 lt = random.choice(LISTING_TYPES)
                 price = random.randint(1_500, 22_000) * 1000
@@ -149,7 +150,46 @@ def build_seed():
                     "source": "seed",
                 })
 
+        brokers.extend(office_brokers)
+        manager = office_brokers[0]["name"] if office_brokers else ""
+
+        offices.append({
+            "id": office_id,
+            "name": name,
+            "city": city,
+            "region": region,
+            "address": "",  # okänd — komplettera manuellt eller via scrape
+            "phone": "",
+            "manager": manager,
+            "lat": lat,
+            "lng": lng,
+            "email": f"{slug}@skandiamaklarna.se",
+            "website": f"https://www.skandiamaklarna.se/maklare/{slug}",
+            "source": "kontorslista_2026",
+            "scraped_at": now,
+            # --- Prestandadata från kontorslistan (Excel, period 250101-250618) ---
+            "kategori": perf["kategori"],
+            "prio": perf["prio"],
+            "prio_num": perf["prio_num"],
+            "oms": perf["oms"],
+            "oms_fjol": perf["oms_fjol"],
+            "sald": perf["sald"],
+            "sald_fjol": perf["sald_fjol"],
+            "yoy_pct": perf["yoy_pct"],
+            "kommentar": perf["kommentar"],
+            "recommended_action": perf["recommended_action"],
+        })
+
     return offices, brokers, listings
+
+
+def get_extra_units():
+    """Kommersiella / vilande enheter utan tilldelad prio i kontorslistan.
+
+    Not seeded as full office documents (no operational kontor, no
+    kontorschef/mäklare workflow) — just exposed read-only for reference.
+    """
+    return EXTRA_UNITS
 
 
 # Initial prospects (värvningsprospekt)
