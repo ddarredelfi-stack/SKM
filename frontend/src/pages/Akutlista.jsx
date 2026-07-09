@@ -14,11 +14,18 @@ import {
 
 export default function Akutlista() {
   const [items, setItems] = useState([]);
+  const [totalOffices, setTotalOffices] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get("/offices", { params: { prio: "1", sort: "oms" } })
-      .then((res) => setItems(res.data.items || []))
+    Promise.all([
+      api.get("/offices", { params: { prio: "1", sort: "oms" } }),
+      api.get("/offices"),
+    ])
+      .then(([p1, all]) => {
+        setItems(p1.data.items || []);
+        setTotalOffices(all.data.total || 0);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -63,9 +70,9 @@ export default function Akutlista() {
         <div className="card-surface p-5">
           <div className="overline">Andel av nätverket</div>
           <div className="font-display font-extrabold tracking-tighter text-3xl mt-2">
-            {items.length ? Math.round((items.length / 80) * 100) : 0}%
+            {items.length && totalOffices ? Math.round((items.length / totalOffices) * 100) : 0}%
           </div>
-          <div className="text-[12px] text-[#52525B] font-body mt-0.5">av 80 kontor</div>
+          <div className="text-[12px] text-[#52525B] font-body mt-0.5">av {totalOffices || "—"} kontor</div>
         </div>
       </section>
 

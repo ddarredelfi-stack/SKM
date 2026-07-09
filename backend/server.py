@@ -50,6 +50,7 @@ from seed_data import (  # noqa: E402
     build_seed,
     get_extra_units,
 )
+from kontorslista_match import PERF_FIELDS, match_offices, norm_name  # noqa: E402
 from storage_service import (  # noqa: E402
     build_path,
     get_object,
@@ -1474,25 +1475,24 @@ async def scrape_sync(user: dict = Depends(current_user)):
         discovered_docs.append({**p, "scraped_at": _now()})
 
     # Preserve internal kontorslista-data (kategori/prio/omsättning/kommentar)
-    # across the scrape by matching on normalized city/name — the public site
-    # doesn't expose this, so a naive replace would silently wipe it.
-    _PERF_FIELDS = ["kategori", "prio", "prio_num", "oms", "oms_fjol", "sald",
-                    "sald_fjol", "yoy_pct", "kommentar", "recommended_action"]
-
-    def _norm(s: str | None) -> str:
-        return (s or "").strip().lower()
-
-    perf_by_key: dict[str, dict] = {}
+    # across the scrape by matching on office NAME (see kontorslista_match.py).
+    # NOTE: city-matching was tried first and failed — skandiamaklarna.se
+    # reports postal town, so e.g. Lund's page says city "Malmö".
+    perf_by_norm: dict[str, dict] = {}
     async for old in db.offices.find({}, {"_id": 0}):
-        key = _norm(old.get("city")) or _norm(old.get("name"))
-        if key and any(old.get(f) is not None for f in _PERF_FIELDS):
-            perf_by_key[key] = {f: old.get(f) for f in _PERF_FIELDS}
+        key = norm_name(old.get("name"))
+        if key and any(old.get(f) is not None for f in PERF_FIELDS):
+            perf_by_norm[key] = {f: old.get(f) for f in PERF_FIELDS}
+
+    new_names = [od.get("name", "") for od in office_docs]
+    mapping = match_offices(list(perf_by_norm.keys()), new_names)
+    doc_by_norm = {norm_name(od.get("name", "")): od for od in office_docs}
 
     perf_carried = 0
-    for od in office_docs:
-        key = _norm(od.get("city")) or _norm(od.get("name"))
-        match = perf_by_key.get(key)
-        if match:
+    for old_norm, new_norm in mapping.items():
+        od = doc_by_norm.get(new_norm)
+        match = perf_by_norm.get(old_norm)
+        if od is not None and match:
             od.update(match)
             perf_carried += 1
 
