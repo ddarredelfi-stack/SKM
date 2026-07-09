@@ -47,6 +47,26 @@ async def send_reminder(recipient: str, subject: str, html: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 
+def build_notification_html(message: str, kind: str, actor: str, when: str) -> str:
+    return f"""<!doctype html>
+<html><body style="font-family:Arial,Helvetica,sans-serif;background:#FAFAFA;padding:0;margin:0;color:#0A0A0A;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#FAFAFA;padding:32px 0;">
+<tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#FFFFFF;border:1px solid #E5E5E5;border-radius:8px;">
+<tr><td style="padding:32px;">
+<p style="margin:0 0 4px 0;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:#52525B;">Skandiamäklarna · Etablering</p>
+<h1 style="margin:0 0 20px 0;font-size:20px;font-weight:800;color:#0A0A0A;">{message}</h1>
+<p style="margin:0 0 6px 0;font-size:13px;color:#52525B;">Av: {actor}</p>
+<p style="margin:0 0 6px 0;font-size:13px;color:#52525B;">Typ: {kind}</p>
+<p style="margin:0;font-size:13px;color:#52525B;">Tidpunkt: {when}</p>
+</td></tr>
+</table>
+<p style="margin:16px 0 0 0;font-size:11px;color:#A1A5AB;">Automatisk avisering från Etablering-verktyget.</p>
+</td></tr>
+</table>
+</body></html>"""
+
+
 def build_reminder_html(prospect_name: str, next_step: str, next_step_date: str,
                         city: str, current_agency: str, notes: str = "") -> str:
     return f"""<!doctype html>

@@ -5,6 +5,7 @@ Authorization Bearer fallback). All /api/* routes require auth except
 /api/auth/login, /api/auth/refresh, /api/ (health).
 """
 from __future__ import annotations
+import asyncio
 import csv
 import io
 import logging
@@ -40,6 +41,7 @@ from auth import (  # noqa: E402
     set_auth_cookies,
     verify_password,
 )
+import email_service  # noqa: E402
 from email_service import build_reminder_html, send_reminder  # noqa: E402
 from municipalities_data import MUNICIPALITIES  # noqa: E402
 from scraper import scrape_offices, to_broker_docs, to_office_doc  # noqa: E402
@@ -286,12 +288,14 @@ class SendReminderRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-async def _activity(kind: str, message: str, actor: Optional[dict] = None, **kwargs: Any):
+async def _activity(kind: str, message: str, actor: Optional[dict] = None,
+                    important: bool = False, **kwargs: Any):
     doc = {
         "id": _id(),
         "kind": kind,
         "message": message,
         "created_at": _now(),
+        "important": important,
         "prospect_id": kwargs.get("prospect_id"),
         "prospect_name": kwargs.get("prospect_name"),
         "from_status": kwargs.get("from_status"),
@@ -300,6 +304,30 @@ async def _activity(kind: str, message: str, actor: Optional[dict] = None, **kwa
         "actor_name": (actor or {}).get("name"),
     }
     await db.activity.insert_one(doc)
+    if important:
+        # E-post till admins för viktiga händelser — fire-and-forget så att
+        # ett mejlfel aldrig stoppar själva åtgärden.
+        asyncio.create_task(_email_admins_about(doc))
+
+
+async def _email_admins_about(event: dict):
+    try:
+        if not email_service._configured():
+            return
+        admins = [u async for u in db.users.find(
+            {"role": "admin", "is_active": {"$ne": False}}, {"_id": 0, "email": 1, "id": 1})]
+        subject = f"Etablering · {event['message'][:80]}"
+        html = email_service.build_notification_html(
+            message=event["message"],
+            kind=event["kind"],
+            actor=event.get("actor_name") or "Systemet",
+            when=event["created_at"],
+        )
+        for a in admins:
+            if a.get("email") and a.get("id") != event.get("actor_id"):
+                await email_service.send_reminder(a["email"], subject, html)
+    except Exception:
+        logger.exception("Kunde inte skicka notismejl")
 
 
 async def _resolve_owner(owner_id: Optional[str]) -> tuple[Optional[str], str]:
@@ -593,6 +621,7 @@ async def update_office_goal(office_id: str,
         "office_goal_updated",
         f"Rekryteringsmål uppdaterat för {office['name']}",
         actor=user,
+        important=True,
     )
     g = await db.office_goals.find_one({"office_id": office_id}, {"_id": 0})
     return _strip_id(g)
@@ -885,7 +914,8 @@ async def update_prospect(pid: str, body: ProspectUpdate, user: dict = Depends(c
         await _activity("status_change",
                         f"{existing['name']}: {existing.get('status')} → {updates['status']}",
                         actor=user, prospect_id=pid, prospect_name=existing["name"],
-                        from_status=existing.get("status"), to_status=updates["status"])
+                        from_status=existing.get("status"), to_status=updates["status"],
+                        important=updates["status"] in ("Signerad", "Onboardad"))
     if "owner_id" in updates and updates["owner_id"] != existing.get("owner_id"):
         await _activity(
             "assigned",
@@ -939,6 +969,7 @@ async def mark_lost(pid: str, body: LostRequest, user: dict = Depends(current_us
         "lost",
         f"{existing['name']} förlorad till {body.lost_to_agency}",
         actor=user, prospect_id=pid, prospect_name=existing["name"],
+        important=True,
     )
     p = await db.prospects.find_one({"id": pid}, {"_id": 0})
     return _strip_id(p)
@@ -1224,6 +1255,32 @@ async def get_activity(limit: int = Query(50, le=500)):
     items = [_strip_id(a) async for a in
              db.activity.find({}, {"_id": 0}).sort("created_at", -1).limit(limit)]
     return {"items": items, "total": len(items)}
+
+
+# ---------------------------------------------------------------------------
+# Notifications ("pling") — bygger på aktivitetsloggen med per-användare
+# lässtatus. Egna handlingar räknas inte som olästa (man behöver ingen
+# pling för det man själv just gjorde).
+# ---------------------------------------------------------------------------
+@api.get("/notifications")
+async def list_notifications(limit: int = Query(25, le=100),
+                             user: dict = Depends(current_user)):
+    items = [_strip_id(a) async for a in
+             db.activity.find({}, {"_id": 0}).sort("created_at", -1).limit(limit)]
+    read_at = user.get("notifications_read_at") or ""
+    unread = sum(
+        1 for a in items
+        if a["created_at"] > read_at and a.get("actor_id") != user["id"]
+    )
+    return {"items": items, "unread_count": unread, "read_at": read_at}
+
+
+@api.post("/notifications/read")
+async def mark_notifications_read(user: dict = Depends(current_user)):
+    now = _now()
+    await db.users.update_one({"id": user["id"]},
+                              {"$set": {"notifications_read_at": now}})
+    return {"read_at": now}
 
 
 # ---------------------------------------------------------------------------

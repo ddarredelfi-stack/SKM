@@ -14,6 +14,7 @@ import {
   Warning,
 } from "@phosphor-icons/react";
 import { useAuth } from "../lib/auth";
+import NotificationBell from "./NotificationBell";
 
 const links = [
   { to: "/", label: "Översikt", icon: ChartBar, end: true, testId: "nav-dashboard" },
@@ -40,7 +41,7 @@ export default function Sidebar() {
           <div className="w-8 h-8 rounded-md bg-[#0A0A0A] flex items-center justify-center">
             <Compass size={18} weight="duotone" color="#CBA135" />
           </div>
-          <div className="leading-tight">
+          <div className="leading-tight flex-1">
             <div className="font-display font-extrabold tracking-tight text-[#0A0A0A] text-[15px]">
               Etablering
             </div>
@@ -48,6 +49,7 @@ export default function Sidebar() {
               Skandiamäklarna
             </div>
           </div>
+          <NotificationBell />
         </div>
       </div>
 
