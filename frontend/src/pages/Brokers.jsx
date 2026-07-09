@@ -13,13 +13,26 @@ import {
 
 export default function Brokers() {
   const [items, setItems] = useState([]);
+  const [roleCounts, setRoleCounts] = useState({});
   const [q, setQ] = useState("");
+  const [role, setRole] = useState("");
 
   const load = async () => {
-    const res = await api.get("/brokers", { params: { q, limit: 500 } });
+    const res = await api.get("/brokers", { params: { q, role, limit: 500 } });
     setItems(res.data.items || []);
+    setRoleCounts(res.data.role_counts || {});
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [q, role]);
+
+  const totalAll = Object.values(roleCounts).reduce((a, b) => a + b, 0);
+  const ROLE_ORDER = [
+    "Partner/Franchisetagare",
+    "Kontorschef",
+    "Fastighetsmäklare",
+    "Koordinator",
+    "Assistent",
+    "Övrig roll",
+  ];
 
   return (
     <div data-testid="brokers-page" className="flex flex-col gap-6">
@@ -27,10 +40,10 @@ export default function Brokers() {
         <div>
           <div className="overline">Människor</div>
           <h1 className="font-display font-extrabold tracking-tighter text-4xl mt-1">
-            Mäklarregister
+            Medarbetare
           </h1>
           <p className="text-[#52525B] text-sm mt-2 font-body">
-            Visar {formatNumber(items.length)} mäklare.
+            Visar {formatNumber(items.length)} personer{role ? ` · ${role}` : ""}. Roll härleds från titeln på skandiamaklarna.se.
           </p>
         </div>
         <div className="flex gap-2">
@@ -53,6 +66,31 @@ export default function Brokers() {
           </button>
         </div>
       </header>
+
+      {/* Rollfilter */}
+      <div className="flex flex-wrap gap-2" data-testid="role-filter">
+        <button
+          onClick={() => setRole("")}
+          data-testid="role-chip-alla"
+          className={`px-3 py-1.5 rounded-full text-[12px] font-display font-semibold border transition-colors ${
+            role === "" ? "bg-[#0A0A0A] text-white border-[#0A0A0A]" : "bg-white text-[#52525B] border-[#E5E5E5] hover:border-[#0A0A0A]"
+          }`}
+        >
+          Alla ({totalAll})
+        </button>
+        {ROLE_ORDER.filter((r) => roleCounts[r] > 0).map((r) => (
+          <button
+            key={r}
+            onClick={() => setRole(role === r ? "" : r)}
+            data-testid={`role-chip-${r}`}
+            className={`px-3 py-1.5 rounded-full text-[12px] font-display font-semibold border transition-colors ${
+              role === r ? "bg-[#0A0A0A] text-white border-[#0A0A0A]" : "bg-white text-[#52525B] border-[#E5E5E5] hover:border-[#0A0A0A]"
+            }`}
+          >
+            {r} ({roleCounts[r]})
+          </button>
+        ))}
+      </div>
 
       <div className="card-surface overflow-hidden">
         <Table data-testid="brokers-table">
@@ -97,7 +135,12 @@ export default function Brokers() {
                     </div>
                   </div>
                 </TableCell>
-                <TableCell className="text-[13px] font-body text-[#52525B]">{b.title}</TableCell>
+                <TableCell className="text-[13px] font-body text-[#52525B]">
+                  <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-display font-semibold bg-[#F4F4F5] text-[#0A0A0A] mb-0.5">
+                    {b.role_category || "—"}
+                  </span>
+                  <div className="text-[11px] text-[#A1A1AA]">{b.title}</div>
+                </TableCell>
                 <TableCell>
                   <div className="text-[13px] font-body text-[#0A0A0A]">{b.office_name}</div>
                   <div className="text-[11px] text-[#A1A1AA] font-body">{b.city}</div>

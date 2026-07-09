@@ -51,6 +51,7 @@ from seed_data import (  # noqa: E402
     get_extra_units,
 )
 from kontorslista_match import PERF_FIELDS, match_offices, norm_name  # noqa: E402
+from roles import ROLE_CATEGORIES, categorize_title  # noqa: E402
 from storage_service import (  # noqa: E402
     build_path,
     get_object,
@@ -728,6 +729,7 @@ async def dashboard_office_recruitment(user: dict = Depends(current_user)):
 
 @api.get("/brokers")
 async def list_brokers(q: str = "", city: str = "", office_id: str = "",
+                       role: str = "",
                        limit: int = Query(500, le=2000)):
     flt: dict[str, Any] = {}
     if city:
@@ -743,7 +745,17 @@ async def list_brokers(q: str = "", city: str = "", office_id: str = "",
         ]
     items = [_strip_id(b) async for b in
              db.brokers.find(flt, {"_id": 0}).sort("name", 1).limit(limit)]
-    return {"items": items, "total": len(items)}
+
+    # Rollkategori härleds ur titeln vid läsning — ingen migrering behövs
+    role_counts: dict[str, int] = {c: 0 for c in ROLE_CATEGORIES}
+    for b in items:
+        b["role_category"] = categorize_title(b.get("title"))
+        role_counts[b["role_category"]] = role_counts.get(b["role_category"], 0) + 1
+
+    if role:
+        items = [b for b in items if b["role_category"] == role]
+
+    return {"items": items, "total": len(items), "role_counts": role_counts}
 
 
 @api.get("/listings")
@@ -1632,10 +1644,12 @@ async def export_offices_csv(user: dict = Depends(current_user)):
 @api.get("/export/brokers.csv")
 async def export_brokers_csv(user: dict = Depends(current_user)):
     items = [_strip_id(b) async for b in db.brokers.find({}, {"_id": 0}).sort("name", 1)]
+    for b in items:
+        b["role_category"] = categorize_title(b.get("title"))
     return _csv_response(
         items,
-        ["name", "title", "phone", "email", "office_name", "city", "active_listings",
-         "ytd_sales", "profile_url"],
+        ["name", "title", "role_category", "phone", "email", "office_name", "city",
+         "active_listings", "ytd_sales", "profile_url"],
         "skandia-maklare.csv",
     )
 
