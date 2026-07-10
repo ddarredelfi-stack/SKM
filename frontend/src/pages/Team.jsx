@@ -22,7 +22,7 @@ import {
 } from "../components/ui/table";
 import { formatDate } from "../lib/api";
 
-const empty = { email: "", name: "", password: "", role: "member" };
+const empty = { email: "", name: "", password: "", role: "member", office_id: "" };
 
 export default function Team() {
   const { user } = useAuth();
@@ -30,6 +30,15 @@ export default function Team() {
   const [form, setForm] = useState(empty);
   const [busy, setBusy] = useState(false);
   const isAdmin = user?.role === "admin";
+  const [offices, setOffices] = useState([]);
+  useEffect(() => {
+    if (isAdmin) {
+      api.get("/offices", { params: { sort: "name" } })
+        .then((r) => setOffices(r.data.items || []))
+        .catch(() => {});
+    }
+    // eslint-disable-next-line
+  }, [isAdmin]);
 
   const load = async () => {
     const res = await api.get("/users");
@@ -123,10 +132,23 @@ export default function Team() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="member">Medlem</SelectItem>
+                <SelectItem value="member">Medlem (internt team)</SelectItem>
                 <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="office">Kontorskonto (FT/kontorschef)</SelectItem>
               </SelectContent>
             </Select>
+            {form.role === "office" && (
+              <Select value={form.office_id} onValueChange={(v) => setForm({ ...form, office_id: v })}>
+                <SelectTrigger data-testid="invite-office" className="input-base">
+                  <SelectValue placeholder="Välj kontor…" />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {offices.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <button
               data-testid="invite-submit"
               type="submit"
@@ -194,7 +216,7 @@ export default function Team() {
                         color: u.role === "admin" ? "#CBA135" : "#52525B",
                       }}
                     >
-                      <Shield size={10} weight="duotone" /> {u.role}
+                      <Shield size={10} weight="duotone" /> {u.role}{u.office_name ? ` · ${u.office_name}` : ""}
                     </span>
                   )}
                 </TableCell>

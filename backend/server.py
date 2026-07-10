@@ -95,6 +95,51 @@ async def admin_only(user: dict = Depends(current_user)) -> dict:
     return user
 
 
+# ---------------------------------------------------------------------------
+# Kontorsbehörighet: rollen "office" är kopplad till ETT kontor och ser bara
+# sin egen data. Interna bedömningsfält (kategori/prio/omsättning/kommentarer/
+# åtgärdsförslag ur kontorslistan) visas ALDRIG för kontorskonton.
+# ---------------------------------------------------------------------------
+INTERNAL_OFFICE_FIELDS = [
+    "kategori", "prio", "prio_num", "oms", "oms_fjol", "sald", "sald_fjol",
+    "yoy_pct", "kommentar", "recommended_action",
+]
+
+
+def office_scope(user: dict) -> Optional[str]:
+    """office_id om användaren är ett kontorskonto, annars None."""
+    if user.get("role") == "office":
+        return user.get("office_id") or "__inget_kontor__"
+    return None
+
+
+def _strip_internal(office: dict) -> dict:
+    for f in INTERNAL_OFFICE_FIELDS:
+        office.pop(f, None)
+    return office
+
+
+async def full_access(user: dict = Depends(current_user)) -> dict:
+    if user.get("role") == "office":
+        raise HTTPException(403, "Kontorskonton har inte behörighet till detta")
+    return user
+
+
+async def _office_prospect_ids(office_id: str) -> list[str]:
+    return [p["id"] async for p in
+            db.prospects.find({"office_id": office_id}, {"_id": 0, "id": 1})]
+
+
+async def _check_prospect_scope(pid: str, user: dict):
+    """403 om ett kontorskonto försöker läsa ett prospekt utanför sitt kontor."""
+    scope = office_scope(user)
+    if not scope:
+        return
+    p = await db.prospects.find_one({"id": pid}, {"_id": 0, "office_id": 1})
+    if not p or p.get("office_id") != scope:
+        raise HTTPException(403, "Prospektet tillhör inte ditt kontor")
+
+
 api = APIRouter(prefix="/api", dependencies=[Depends(current_user)])
 
 
@@ -247,13 +292,15 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     name: str
-    role: str = "member"  # admin | member
+    role: str = "member"  # admin | member | office
+    office_id: Optional[str] = None  # krävs för role=office
 
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     role: Optional[str] = None
     password: Optional[str] = None
+    office_id: Optional[str] = None
 
 
 class GoalIn(BaseModel):
@@ -360,44 +407,61 @@ def _strip_id(doc: dict) -> dict:
 # Dashboard / KPIs
 # ---------------------------------------------------------------------------
 @api.get("/dashboard/kpis")
-async def kpis(stale_days: int = 14):
+async def kpis(stale_days: int = 14, user: dict = Depends(current_user)):
     from datetime import timedelta
-    offices = await db.offices.count_documents({})
-    brokers = await db.brokers.count_documents({})
-    listings = await db.listings.count_documents({})
-    prospects_total = await db.prospects.count_documents({"is_lost": {"$ne": True}})
+    scope = office_scope(user)
+    office_flt = {"id": scope} if scope else {}
+    p_scope = {"office_id": scope} if scope else {}
+    offices = await db.offices.count_documents(office_flt)
+    brokers = await db.brokers.count_documents({"office_id": scope} if scope else {})
+    listings = await db.listings.count_documents({"office_id": scope} if scope else {})
+    prospects_total = await db.prospects.count_documents({"is_lost": {"$ne": True}, **p_scope})
 
     pipeline = {}
     for s in PIPELINE_STATUSES:
-        pipeline[s] = await db.prospects.count_documents({"status": s, "is_lost": {"$ne": True}})
+        pipeline[s] = await db.prospects.count_documents({"status": s, "is_lost": {"$ne": True}, **p_scope})
 
     # Regions covered
     region_cursor = db.offices.aggregate([{"$group": {"_id": "$region"}}])
     regions = [r["_id"] async for r in region_cursor]
 
     goals = [_strip_id(g) async for g in db.goals.find({}, {"_id": 0})]
+    act_flt: dict = {}
+    if scope:
+        pids = await _office_prospect_ids(scope)
+        act_flt = {"prospect_id": {"$in": pids}}
     activity = [_strip_id(a) async for a in
-                db.activity.find({}, {"_id": 0}).sort("created_at", -1).limit(15)]
+                db.activity.find(act_flt, {"_id": 0}).sort("created_at", -1).limit(15)]
 
-    lost_total = await db.prospects.count_documents({"is_lost": True})
+    lost_total = await db.prospects.count_documents({"is_lost": True, **p_scope})
     cutoff = (datetime.now(timezone.utc) - timedelta(days=stale_days)).isoformat()
     stale_count = await db.prospects.count_documents({
         "is_lost": {"$ne": True},
         "status": {"$ne": "Onboardad"},
         "updated_at": {"$lt": cutoff},
+        **p_scope,
     })
 
     # Pipeline economic value = sum of expected_first_year_revenue + signing_bonus
     # across active (non-lost) prospects.
     pipeline_value = 0
     async for p in db.prospects.find(
-        {"is_lost": {"$ne": True}, "status": {"$ne": "Onboardad"}},
+        {"is_lost": {"$ne": True}, "status": {"$ne": "Onboardad"}, **p_scope},
         {"_id": 0, "expected_first_year_revenue": 1, "signing_bonus": 1},
     ):
         pipeline_value += int(p.get("expected_first_year_revenue") or 0)
         pipeline_value += int(p.get("signing_bonus") or 0)
 
-    # Kontorsprestanda-rollup från kontorslistan (kategori/prio/omsättning)
+    # Kontorsprestanda-rollup från kontorslistan — internt, döljs för kontorskonton
+    if scope:
+        return {
+            "offices": offices, "brokers": brokers, "listings": listings,
+            "prospects_total": prospects_total, "pipeline": pipeline,
+            "regions_covered": 1, "goals": [], "activity": activity,
+            "lost_total": lost_total, "stale_count": stale_count,
+            "stale_days": stale_days, "pipeline_value": pipeline_value,
+            "office_performance": None, "as_of": _now(),
+        }
     kategori_breakdown: dict[str, int] = {}
     async for r in db.offices.aggregate([{"$group": {"_id": "$kategori", "count": {"$sum": 1}}}]):
         if r["_id"]:
@@ -436,7 +500,7 @@ async def kpis(stale_days: int = 14):
 
 @api.get("/dashboard/insights")
 async def insights(stale_days: int = Query(14, ge=1, le=180),
-                   user: dict = Depends(current_user)):
+                   user: dict = Depends(full_access)):
     from datetime import timedelta
 
     # Source breakdown (active prospects only)
@@ -485,8 +549,13 @@ async def insights(stale_days: int = Query(14, ge=1, le=180),
 # ---------------------------------------------------------------------------
 @api.get("/offices")
 async def list_offices(q: str = "", city: str = "", region: str = "",
-                        kategori: str = "", prio: str = "", sort: str = "name"):
+                        kategori: str = "", prio: str = "", sort: str = "name",
+                        user: dict = Depends(current_user)):
     flt: dict[str, Any] = {}
+    scope = office_scope(user)
+    if scope:
+        flt["id"] = scope
+        kategori = prio = ""  # interna filter gäller inte kontorskonton
     if city:
         flt["city"] = city
     if region:
@@ -510,11 +579,13 @@ async def list_offices(q: str = "", city: str = "", region: str = "",
     }
     cursor = db.offices.find(flt, {"_id": 0}).sort(sort_map.get(sort, sort_map["name"]))
     items = [_strip_id(o) async for o in cursor]
+    if scope:
+        items = [_strip_internal(o) for o in items]
     return {"items": items, "total": len(items)}
 
 
 @api.get("/offices/extra-units")
-async def offices_extra_units():
+async def offices_extra_units(user: dict = Depends(full_access)):
     """Kommersiella / vilande enheter från kontorslistan utan tilldelad prio.
     Read-only reference data — not part of the operational offices collection."""
     return {"items": get_extra_units()}
@@ -522,9 +593,14 @@ async def offices_extra_units():
 
 @api.get("/offices/{office_id}")
 async def get_office(office_id: str, user: dict = Depends(current_user)):
+    scope = office_scope(user)
+    if scope and scope != office_id:
+        raise HTTPException(403, "Du har bara åtkomst till ditt eget kontor")
     office = await db.offices.find_one({"id": office_id}, {"_id": 0})
     if not office:
         raise HTTPException(404, "Kontor hittades inte")
+    if scope:
+        office = _strip_internal(office)
     brokers = [_strip_id(b) async for b in
                db.brokers.find({"office_id": office_id}, {"_id": 0}).sort("name", 1)]
     listings = [_strip_id(l) async for l in
@@ -592,7 +668,7 @@ async def get_office(office_id: str, user: dict = Depends(current_user)):
 @api.put("/offices/{office_id}/recruitment")
 async def update_office_goal(office_id: str,
                              body: OfficeGoalUpdate,
-                             user: dict = Depends(current_user)):
+                             user: dict = Depends(full_access)):
     office = await db.offices.find_one({"id": office_id}, {"_id": 0})
     if not office:
         raise HTTPException(404, "Kontor hittades inte")
@@ -628,7 +704,7 @@ async def update_office_goal(office_id: str,
 
 
 @api.post("/offices/{office_id}/link-city-prospects")
-async def link_city_prospects(office_id: str, user: dict = Depends(current_user)):
+async def link_city_prospects(office_id: str, user: dict = Depends(full_access)):
     """Bulk-assign all prospects in this office's city (without explicit office_id)
     to this office. Used for migrating legacy city-matched prospects."""
     office = await db.offices.find_one({"id": office_id}, {"_id": 0})
@@ -664,7 +740,7 @@ async def link_city_prospects(office_id: str, user: dict = Depends(current_user)
 
 
 @api.get("/dashboard/office-recruitment")
-async def dashboard_office_recruitment(user: dict = Depends(current_user)):
+async def dashboard_office_recruitment(user: dict = Depends(full_access)):
     """Aggregated rollup of all office recruitment goals — for dashboard."""
     offices = [_strip_id(o) async for o in db.offices.find({}, {"_id": 0})]
     goals_map = {}
@@ -759,8 +835,13 @@ async def dashboard_office_recruitment(user: dict = Depends(current_user)):
 @api.get("/brokers")
 async def list_brokers(q: str = "", city: str = "", office_id: str = "",
                        role: str = "",
-                       limit: int = Query(500, le=2000)):
+                       limit: int = Query(500, le=2000),
+                       user: dict = Depends(current_user)):
     flt: dict[str, Any] = {}
+    scope = office_scope(user)
+    if scope:
+        office_id = scope
+        city = ""
     if city:
         flt["city"] = city
     if office_id:
@@ -790,8 +871,13 @@ async def list_brokers(q: str = "", city: str = "", office_id: str = "",
 @api.get("/listings")
 async def list_listings(q: str = "", city: str = "", broker_id: str = "",
                         type_: str = Query("", alias="type"),
-                        limit: int = Query(200, le=2000)):
+                        limit: int = Query(200, le=2000),
+                        user: dict = Depends(current_user)):
     flt: dict[str, Any] = {}
+    scope = office_scope(user)
+    if scope:
+        flt["office_id"] = scope
+        city = ""
     if city:
         flt["city"] = city
     if broker_id:
@@ -818,6 +904,10 @@ async def list_prospects(q: str = "", status: str = "", city: str = "",
                          include_lost: bool = False,
                          user: dict = Depends(current_user)):
     flt: dict[str, Any] = {}
+    scope = office_scope(user)
+    if scope:
+        office_id = scope
+        city = ""
     if not include_lost:
         flt["is_lost"] = {"$ne": True}
     if status:
@@ -855,7 +945,7 @@ async def list_prospects(q: str = "", status: str = "", city: str = "",
 
 
 @api.post("/prospects")
-async def create_prospect(body: ProspectIn, user: dict = Depends(current_user)):
+async def create_prospect(body: ProspectIn, user: dict = Depends(full_access)):
     if body.status not in PIPELINE_STATUSES:
         raise HTTPException(400, "Ogiltig status")
     doc = body.model_dump()
@@ -885,7 +975,8 @@ async def create_prospect(body: ProspectIn, user: dict = Depends(current_user)):
 
 
 @api.get("/prospects/{pid}")
-async def get_prospect(pid: str):
+async def get_prospect(pid: str, user: dict = Depends(current_user)):
+    await _check_prospect_scope(pid, user)
     p = await db.prospects.find_one({"id": pid}, {"_id": 0})
     if not p:
         raise HTTPException(404, "Prospekt hittades inte")
@@ -893,7 +984,7 @@ async def get_prospect(pid: str):
 
 
 @api.patch("/prospects/{pid}")
-async def update_prospect(pid: str, body: ProspectUpdate, user: dict = Depends(current_user)):
+async def update_prospect(pid: str, body: ProspectUpdate, user: dict = Depends(full_access)):
     existing = await db.prospects.find_one({"id": pid}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Prospekt hittades inte")
@@ -933,12 +1024,12 @@ async def update_prospect(pid: str, body: ProspectUpdate, user: dict = Depends(c
 
 
 @api.patch("/prospects/{pid}/status")
-async def update_status(pid: str, body: StatusUpdate, user: dict = Depends(current_user)):
+async def update_status(pid: str, body: StatusUpdate, user: dict = Depends(full_access)):
     return await update_prospect(pid, ProspectUpdate(status=body.status), user)
 
 
 @api.delete("/prospects/{pid}")
-async def delete_prospect(pid: str, user: dict = Depends(current_user)):
+async def delete_prospect(pid: str, user: dict = Depends(full_access)):
     existing = await db.prospects.find_one({"id": pid}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Prospekt hittades inte")
@@ -949,7 +1040,7 @@ async def delete_prospect(pid: str, user: dict = Depends(current_user)):
 
 
 @api.post("/prospects/{pid}/lost")
-async def mark_lost(pid: str, body: LostRequest, user: dict = Depends(current_user)):
+async def mark_lost(pid: str, body: LostRequest, user: dict = Depends(full_access)):
     existing = await db.prospects.find_one({"id": pid}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Prospekt hittades inte")
@@ -976,7 +1067,7 @@ async def mark_lost(pid: str, body: LostRequest, user: dict = Depends(current_us
 
 
 @api.post("/prospects/{pid}/restore")
-async def restore_prospect(pid: str, user: dict = Depends(current_user)):
+async def restore_prospect(pid: str, user: dict = Depends(full_access)):
     existing = await db.prospects.find_one({"id": pid}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Prospekt hittades inte")
@@ -1001,7 +1092,7 @@ async def restore_prospect(pid: str, user: dict = Depends(current_user)):
 
 @api.get("/stale-prospects")
 async def stale_prospects(days: int = Query(14, ge=1, le=180),
-                          user: dict = Depends(current_user)):
+                          user: dict = Depends(full_access)):
     from datetime import timedelta
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     items = []
@@ -1028,7 +1119,7 @@ MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
 @api.post("/prospects/{pid}/files")
 async def upload_prospect_file(pid: str,
                                file: UploadFile = File(...),
-                               user: dict = Depends(current_user)):
+                               user: dict = Depends(full_access)):
     prospect = await db.prospects.find_one({"id": pid}, {"_id": 0})
     if not prospect:
         raise HTTPException(404, "Prospekt hittades inte")
@@ -1069,6 +1160,7 @@ async def upload_prospect_file(pid: str,
 
 @api.get("/prospects/{pid}/files")
 async def list_prospect_files(pid: str, user: dict = Depends(current_user)):
+    await _check_prospect_scope(pid, user)
     items = []
     async for f in db.files.find(
         {"prospect_id": pid, "is_deleted": False},
@@ -1083,6 +1175,7 @@ async def download_file(file_id: str, user: dict = Depends(current_user)):
     record = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
     if not record:
         raise HTTPException(404, "Fil hittades inte")
+    await _check_prospect_scope(record["prospect_id"], user)
     try:
         data, ct = await get_object(record["storage_path"])
     except Exception as e:
@@ -1097,7 +1190,7 @@ async def download_file(file_id: str, user: dict = Depends(current_user)):
 
 
 @api.delete("/files/{file_id}")
-async def delete_file(file_id: str, user: dict = Depends(current_user)):
+async def delete_file(file_id: str, user: dict = Depends(full_access)):
     record = await db.files.find_one({"id": file_id, "is_deleted": False}, {"_id": 0})
     if not record:
         raise HTTPException(404, "Fil hittades inte")
@@ -1133,6 +1226,7 @@ DEFAULT_ONBOARDING_TEMPLATE = [
 
 @api.get("/prospects/{pid}/onboarding")
 async def list_onboarding(pid: str, user: dict = Depends(current_user)):
+    await _check_prospect_scope(pid, user)
     items = []
     async for it in db.onboarding.find(
         {"prospect_id": pid},
@@ -1143,7 +1237,7 @@ async def list_onboarding(pid: str, user: dict = Depends(current_user)):
 
 
 @api.post("/prospects/{pid}/onboarding/init")
-async def init_onboarding(pid: str, user: dict = Depends(current_user)):
+async def init_onboarding(pid: str, user: dict = Depends(full_access)):
     """Create the default onboarding checklist for a prospect.
     Idempotent: returns existing items if already initialized."""
     prospect = await db.prospects.find_one({"id": pid}, {"_id": 0})
@@ -1187,7 +1281,7 @@ async def init_onboarding(pid: str, user: dict = Depends(current_user)):
 
 @api.post("/prospects/{pid}/onboarding")
 async def add_onboarding_item(pid: str, body: OnboardingItemCreate,
-                              user: dict = Depends(current_user)):
+                              user: dict = Depends(full_access)):
     prospect = await db.prospects.find_one({"id": pid}, {"_id": 0})
     if not prospect:
         raise HTTPException(404, "Prospekt hittades inte")
@@ -1216,7 +1310,7 @@ async def add_onboarding_item(pid: str, body: OnboardingItemCreate,
 
 @api.patch("/onboarding/{item_id}")
 async def update_onboarding(item_id: str, body: OnboardingItemUpdate,
-                            user: dict = Depends(current_user)):
+                            user: dict = Depends(full_access)):
     existing = await db.onboarding.find_one({"id": item_id}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Onboarding-steg hittades inte")
@@ -1240,7 +1334,7 @@ async def update_onboarding(item_id: str, body: OnboardingItemUpdate,
 
 
 @api.delete("/onboarding/{item_id}")
-async def delete_onboarding(item_id: str, user: dict = Depends(current_user)):
+async def delete_onboarding(item_id: str, user: dict = Depends(full_access)):
     res = await db.onboarding.delete_one({"id": item_id})
     if not res.deleted_count:
         raise HTTPException(404, "Steg hittades inte")
@@ -1251,9 +1345,15 @@ async def delete_onboarding(item_id: str, user: dict = Depends(current_user)):
 # Activity log
 # ---------------------------------------------------------------------------
 @api.get("/activity")
-async def get_activity(limit: int = Query(50, le=500)):
+async def get_activity(limit: int = Query(50, le=500),
+                       user: dict = Depends(current_user)):
+    flt: dict = {}
+    scope = office_scope(user)
+    if scope:
+        pids = await _office_prospect_ids(scope)
+        flt = {"prospect_id": {"$in": pids}}
     items = [_strip_id(a) async for a in
-             db.activity.find({}, {"_id": 0}).sort("created_at", -1).limit(limit)]
+             db.activity.find(flt, {"_id": 0}).sort("created_at", -1).limit(limit)]
     return {"items": items, "total": len(items)}
 
 
@@ -1265,8 +1365,13 @@ async def get_activity(limit: int = Query(50, le=500)):
 @api.get("/notifications")
 async def list_notifications(limit: int = Query(25, le=100),
                              user: dict = Depends(current_user)):
+    flt: dict = {}
+    scope = office_scope(user)
+    if scope:
+        pids = await _office_prospect_ids(scope)
+        flt = {"prospect_id": {"$in": pids}}
     items = [_strip_id(a) async for a in
-             db.activity.find({}, {"_id": 0}).sort("created_at", -1).limit(limit)]
+             db.activity.find(flt, {"_id": 0}).sort("created_at", -1).limit(limit)]
     read_at = user.get("notifications_read_at") or ""
     unread = sum(
         1 for a in items
@@ -1287,13 +1392,13 @@ async def mark_notifications_read(user: dict = Depends(current_user)):
 # Goals
 # ---------------------------------------------------------------------------
 @api.get("/goals")
-async def list_goals():
+async def list_goals(user: dict = Depends(full_access)):
     items = [_strip_id(g) async for g in db.goals.find({}, {"_id": 0})]
     return {"items": items}
 
 
 @api.post("/goals")
-async def create_goal(body: GoalIn):
+async def create_goal(body: GoalIn, user: dict = Depends(full_access)):
     doc = body.model_dump()
     doc["id"] = _id()
     doc["created_at"] = _now()
@@ -1302,7 +1407,7 @@ async def create_goal(body: GoalIn):
 
 
 @api.patch("/goals/{gid}")
-async def update_goal(gid: str, body: GoalUpdate):
+async def update_goal(gid: str, body: GoalUpdate, user: dict = Depends(full_access)):
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if not updates:
         raise HTTPException(400, "Inget att uppdatera")
@@ -1314,7 +1419,7 @@ async def update_goal(gid: str, body: GoalUpdate):
 
 
 @api.delete("/goals/{gid}")
-async def delete_goal(gid: str):
+async def delete_goal(gid: str, user: dict = Depends(full_access)):
     res = await db.goals.delete_one({"id": gid})
     if not res.deleted_count:
         raise HTTPException(404, "Mål hittades inte")
@@ -1325,7 +1430,7 @@ async def delete_goal(gid: str):
 # Geo (map + whitespots)
 # ---------------------------------------------------------------------------
 @api.get("/geo/municipalities")
-async def geo_municipalities():
+async def geo_municipalities(user: dict = Depends(full_access)):
     cities_with_offices = set()
     async for o in db.offices.find({}, {"_id": 0, "city": 1, "name": 1}):
         for v in (o.get("city"), o.get("name")):
@@ -1359,7 +1464,7 @@ async def geo_municipalities():
 
 
 @api.get("/geo/whitespots")
-async def whitespots(min_population: int = 25000, limit: int = 30):
+async def whitespots(min_population: int = 25000, limit: int = 30, user: dict = Depends(full_access)):
     geo = await geo_municipalities()
     items = [m for m in geo["items"]
              if not m["has_skandia"] and m["population"] >= min_population]
@@ -1384,7 +1489,7 @@ def _city_meta(city: str) -> dict:
 
 
 @api.get("/discovery/{city}")
-async def discovery_links(city: str, user: dict = Depends(current_user)):
+async def discovery_links(city: str, user: dict = Depends(full_access)):
     """Curated lead-discovery links for a city (no scraping involved)."""
     from urllib.parse import quote
     safe = quote(city)
@@ -1432,7 +1537,7 @@ async def discovery_links(city: str, user: dict = Depends(current_user)):
 
 
 @api.post("/discovery/{city}/ai-strategy")
-async def discovery_ai_strategy(city: str, user: dict = Depends(current_user)):
+async def discovery_ai_strategy(city: str, user: dict = Depends(full_access)):
     """Generate AI-powered sourcing strategy for a city."""
     meta = _city_meta(city)
     # Reuse competitor list logic from geo_municipalities
@@ -1464,13 +1569,13 @@ async def discovery_ai_strategy(city: str, user: dict = Depends(current_user)):
 # Scrape
 # ---------------------------------------------------------------------------
 @api.get("/scrape/status")
-async def scrape_status():
+async def scrape_status(user: dict = Depends(full_access)):
     last = await db.scrapes.find_one({}, {"_id": 0}, sort=[("started_at", -1)])
     return {"last": last}
 
 
 @api.post("/scrape/run")
-async def scrape_run(limit: int = Query(5, ge=1, le=200), user: dict = Depends(current_user)):
+async def scrape_run(limit: int = Query(5, ge=1, le=200), user: dict = Depends(full_access)):
     result = await scrape_offices(limit=limit, db=db)
     # Persist run metadata (NOT the full office payloads to keep doc small)
     record = {
@@ -1504,7 +1609,7 @@ async def scrape_run(limit: int = Query(5, ge=1, le=200), user: dict = Depends(c
 
 
 @api.post("/scrape/sync")
-async def scrape_sync(user: dict = Depends(current_user)):
+async def scrape_sync(user: dict = Depends(full_access)):
     """Run a full scrape and REPLACE the offices + brokers + scraped_offices collections.
 
     Use this to bring the dashboard's primary data fully in sync with the live site.
@@ -1597,7 +1702,7 @@ async def scrape_sync(user: dict = Depends(current_user)):
 
 
 @api.get("/scrape/discovered")
-async def scrape_discovered():
+async def scrape_discovered(user: dict = Depends(full_access)):
     items = [_strip_id(o) async for o in db.scraped_offices.find({}, {"_id": 0}).limit(200)]
     return {"items": items, "total": len(items)}
 
@@ -1606,7 +1711,7 @@ async def scrape_discovered():
 # AI research brief
 # ---------------------------------------------------------------------------
 @api.post("/ai/research-brief")
-async def ai_brief(body: ResearchRequest, user: dict = Depends(current_user)):
+async def ai_brief(body: ResearchRequest, user: dict = Depends(full_access)):
     try:
         brief = await generate_brief(
             name=body.name,
@@ -1632,7 +1737,7 @@ async def ai_brief(body: ResearchRequest, user: dict = Depends(current_user)):
 # Email reminders
 # ---------------------------------------------------------------------------
 @api.post("/reminders/send")
-async def send_reminder_for(body: SendReminderRequest, user: dict = Depends(current_user)):
+async def send_reminder_for(body: SendReminderRequest, user: dict = Depends(full_access)):
     p = await db.prospects.find_one({"id": body.prospect_id}, {"_id": 0})
     if not p:
         raise HTTPException(404, "Prospekt hittades inte")
@@ -1656,7 +1761,7 @@ async def send_reminder_for(body: SendReminderRequest, user: dict = Depends(curr
 
 
 @api.get("/reminders/due")
-async def reminders_due(days_ahead: int = 7):
+async def reminders_due(days_ahead: int = 7, user: dict = Depends(full_access)):
     """Return prospects with next_step_date within the next N days."""
     from datetime import timedelta
     now = datetime.now(timezone.utc)
@@ -1688,7 +1793,7 @@ def _csv_response(rows: list[dict], fields: list[str], filename: str) -> Streami
 
 
 @api.get("/export/offices.csv")
-async def export_offices_csv(user: dict = Depends(current_user)):
+async def export_offices_csv(user: dict = Depends(full_access)):
     items = [_strip_id(o) async for o in db.offices.find({}, {"_id": 0}).sort("name", 1)]
     return _csv_response(
         items,
@@ -1699,7 +1804,7 @@ async def export_offices_csv(user: dict = Depends(current_user)):
 
 
 @api.get("/export/brokers.csv")
-async def export_brokers_csv(user: dict = Depends(current_user)):
+async def export_brokers_csv(user: dict = Depends(full_access)):
     items = [_strip_id(b) async for b in db.brokers.find({}, {"_id": 0}).sort("name", 1)]
     for b in items:
         b["role_category"] = categorize_title(b.get("title"))
@@ -1712,7 +1817,7 @@ async def export_brokers_csv(user: dict = Depends(current_user)):
 
 
 @api.get("/export/prospects.csv")
-async def export_prospects_csv(user: dict = Depends(current_user)):
+async def export_prospects_csv(user: dict = Depends(full_access)):
     items = [_strip_id(p) async for p in db.prospects.find({}, {"_id": 0}).sort("status", 1)]
     return _csv_response(
         items,
@@ -1808,13 +1913,23 @@ async def create_user(body: UserCreate, admin: dict = Depends(admin_only)):
     email = body.email.lower().strip()
     if await db.users.find_one({"email": email}):
         raise HTTPException(409, "E-post används redan")
-    if body.role not in ("admin", "member"):
+    if body.role not in ("admin", "member", "office"):
         raise HTTPException(400, "Ogiltig roll")
+    office_id, office_name = None, None
+    if body.role == "office":
+        if not body.office_id:
+            raise HTTPException(400, "Kontorskonto kräver ett kontor (office_id)")
+        office = await db.offices.find_one({"id": body.office_id}, {"_id": 0, "id": 1, "name": 1})
+        if not office:
+            raise HTTPException(404, "Kontoret hittades inte")
+        office_id, office_name = office["id"], office["name"]
     doc = {
         "id": _id(),
         "email": email,
         "name": body.name.strip(),
         "role": body.role,
+        "office_id": office_id,
+        "office_name": office_name,
         "password_hash": hash_password(body.password),
         "created_at": _now(),
         "created_by": admin["id"],

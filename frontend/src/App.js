@@ -17,6 +17,14 @@ import Team from "@/pages/Team";
 import Lost from "@/pages/Lost";
 import OfficeDetail from "@/pages/OfficeDetail";
 
+function HomeRoute() {
+  const { user } = useAuth();
+  if (user && user.role === "office" && user.office_id) {
+    return <Navigate to={`/offices/${user.office_id}`} replace />;
+  }
+  return <Dashboard />;
+}
+
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user } = useAuth();
   const location = useLocation();
@@ -56,7 +64,7 @@ function AppRoutes() {
           <ProtectedRoute>
             <Layout>
               <Routes>
-                <Route path="/" element={<Dashboard />} />
+                <Route path="/" element={<HomeRoute />} />
                 <Route path="/pipeline" element={<Pipeline />} />
                 <Route path="/offices" element={<Offices />} />
                 <Route path="/akutlista" element={<Akutlista />} />

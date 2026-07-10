@@ -18,6 +18,7 @@ import {
   ChartLineUp,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { useAuth } from "../lib/auth";
 import { api, formatDate, formatDateTime, formatSEK, formatPct, STATUS_TONE } from "../lib/api";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -36,6 +37,8 @@ import ActivityFeed from "../components/ActivityFeed";
 
 export default function OfficeDetail() {
   const { id } = useParams();
+  const { user } = useAuth();
+  const isOfficeUser = user?.role === "office";
   const [data, setData] = useState(null);
   const [goalForm, setGoalForm] = useState({
     target_hires: 0,
@@ -244,7 +247,8 @@ export default function OfficeDetail() {
         </section>
       )}
 
-      {/* Recruitment goal editor */}
+      {/* Recruitment goal editor — endast internt team kan redigera */}
+      {!isOfficeUser && (
       <section className="card-surface p-6" data-testid="recruitment-section">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -361,6 +365,7 @@ export default function OfficeDetail() {
           </p>
         )}
       </section>
+      )}
 
       {/* Prospects in city */}
       <section>

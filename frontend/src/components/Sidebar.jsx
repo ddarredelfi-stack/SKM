@@ -20,14 +20,27 @@ const links = [
   { to: "/", label: "Översikt", icon: ChartBar, end: true, testId: "nav-dashboard" },
   { to: "/pipeline", label: "Pipeline", icon: Kanban, testId: "nav-pipeline" },
   { to: "/lost", label: "Förlorade", icon: XCircle, testId: "nav-lost" },
-  { to: "/offices", label: "Kontor", icon: Buildings, testId: "nav-offices" },
-  { to: "/akutlista", label: "Akutlista (Prio 1)", icon: Warning, testId: "nav-akutlista" },
+  { to: "/offices", label: "Kontor", icon: Buildings, testId: "nav-offices", internal: true },
+  { to: "/akutlista", label: "Akutlista (Prio 1)", icon: Warning, testId: "nav-akutlista", internal: true },
   { to: "/brokers", label: "Mäklare", icon: UsersThree, testId: "nav-brokers" },
-  { to: "/map", label: "Karta & White Spots", icon: MapTrifold, testId: "nav-map" },
-  { to: "/scrape", label: "Scraping", icon: ArrowsClockwise, testId: "nav-scrape" },
-  { to: "/settings", label: "Mål & Inställningar", icon: GearSix, testId: "nav-settings" },
-  { to: "/team", label: "Mitt team", icon: UsersFour, testId: "nav-team" },
+  { to: "/map", label: "Karta & White Spots", icon: MapTrifold, testId: "nav-map", internal: true },
+  { to: "/scrape", label: "Scraping", icon: ArrowsClockwise, testId: "nav-scrape", internal: true },
+  { to: "/settings", label: "Mål & Inställningar", icon: GearSix, testId: "nav-settings", internal: true },
+  { to: "/team", label: "Mitt team", icon: UsersFour, testId: "nav-team", adminOnly: true },
 ];
+
+function visibleLinks(user) {
+  const isOffice = user?.role === "office";
+  return links
+    .filter((l) => !(l.internal && isOffice))
+    .filter((l) => !(l.adminOnly && user?.role !== "admin"))
+    .map((l) => {
+      if (isOffice && l.to === "/") {
+        return { ...l, to: `/offices/${user.office_id}`, label: "Mitt kontor", icon: Buildings, end: false };
+      }
+      return l;
+    });
+}
 
 export default function Sidebar() {
   const { user, logout } = useAuth();
@@ -55,7 +68,7 @@ export default function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-0.5">
         <div className="overline px-3 pb-2 pt-1">Arbetsyta</div>
-        {links.map((l) => (
+        {visibleLinks(user).map((l) => (
           <NavLink
             key={l.to}
             to={l.to}
